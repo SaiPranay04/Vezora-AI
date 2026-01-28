@@ -1,7 +1,9 @@
 import { useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '../lib/utils';
-import { Bot, User } from 'lucide-react';
+import { Bot, User, Volume2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export interface Message {
     id: string;
@@ -13,9 +15,10 @@ export interface Message {
 interface ChatBoxProps {
     messages: Message[];
     isTyping?: boolean;
+    onReplayMessage?: (content: string) => void;
 }
 
-export const ChatBox = ({ messages, isTyping }: ChatBoxProps) => {
+export const ChatBox = ({ messages, isTyping, onReplayMessage }: ChatBoxProps) => {
     const bottomRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -30,16 +33,17 @@ export const ChatBox = ({ messages, isTyping }: ChatBoxProps) => {
                         key={msg.id}
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.3, ease: "easeOut" }}
                         className={cn(
-                            "flex w-full",
+                            "flex w-full group",
                             msg.role === 'user' ? "justify-end" : "justify-start"
                         )}
                     >
                         <div className={cn(
-                            "max-w-[80%] rounded-2xl p-4 flex gap-4 backdrop-blur-sm border",
+                            "max-w-[80%] rounded-2xl p-4 flex gap-4 backdrop-blur-sm border transition-all duration-200",
                             msg.role === 'user'
-                                ? "bg-bubble-user border-primary/20 text-text rounded-tr-none flex-row-reverse text-right"
-                                : "bg-bubble-ai border-white/5 text-text rounded-tl-none shadow-[0_0_15px_-3px_rgba(142,68,255,0.1)]"
+                                ? "bg-bubble-user border-primary/20 text-text rounded-tr-none flex-row-reverse hover:border-primary/40"
+                                : "bg-bubble-ai border-white/5 text-text rounded-tl-none shadow-[0_0_15px_-3px_rgba(142,68,255,0.1)] hover:shadow-[0_0_25px_-3px_rgba(142,68,255,0.2)] hover:border-white/10"
                         )}>
 
                             {/* Icon */}
@@ -51,11 +55,41 @@ export const ChatBox = ({ messages, isTyping }: ChatBoxProps) => {
                             </div>
 
                             <div className="flex flex-col gap-1 w-full">
-                                <p className="text-sm leading-relaxed whitespace-pre-wrap font-light tracking-wide">{msg.content}</p>
-                                <span className={cn(
-                                    "text-[10px] opacity-30 font-mono mt-1 block",
-                                    msg.role === 'user' ? "text-left" : "text-right"
-                                )}>{msg.timestamp}</span>
+                                <div className="text-sm leading-relaxed font-light tracking-wide prose prose-invert prose-sm max-w-none">
+                                    <ReactMarkdown 
+                                        remarkPlugins={[remarkGfm]}
+                                        components={{
+                                            // Custom styling for markdown elements
+                                            p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                                            a: ({href, children}) => <a href={href} className="text-primary hover:text-primary/80 underline" target="_blank" rel="noopener noreferrer">{children}</a>,
+                                            code: ({children}) => <code className="bg-black/30 px-1.5 py-0.5 rounded text-secondary font-mono text-xs">{children}</code>,
+                                            pre: ({children}) => <pre className="bg-black/50 border border-white/10 rounded-lg p-3 overflow-x-auto my-2">{children}</pre>,
+                                            ul: ({children}) => <ul className="list-disc list-inside my-2 space-y-1">{children}</ul>,
+                                            ol: ({children}) => <ol className="list-decimal list-inside my-2 space-y-1">{children}</ol>,
+                                            strong: ({children}) => <strong className="font-semibold text-white">{children}</strong>,
+                                            em: ({children}) => <em className="italic text-glow">{children}</em>,
+                                        }}
+                                    >
+                                        {msg.content}
+                                    </ReactMarkdown>
+                                </div>
+                                <div className={cn(
+                                    "flex items-center gap-2 mt-1",
+                                    msg.role === 'user' ? "justify-start" : "justify-end"
+                                )}>
+                                    <span className="text-[10px] opacity-30 font-mono">{msg.timestamp}</span>
+                                    {msg.role === 'assistant' && onReplayMessage && (
+                                        <motion.button
+                                            whileHover={{ scale: 1.1 }}
+                                            whileTap={{ scale: 0.9 }}
+                                            onClick={() => onReplayMessage(msg.content)}
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-white/10"
+                                            title="Replay voice"
+                                        >
+                                            <Volume2 size={12} className="text-secondary" />
+                                        </motion.button>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </motion.div>

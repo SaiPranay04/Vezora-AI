@@ -9,7 +9,12 @@ export const ChatPage = () => {
 
     // State lifted from original App.tsx
     const [messages, setMessages] = useState<Message[]>([
-        { id: '1', role: 'assistant', content: "Vezora OS v1.0 initialized. Systems Nominal. \nReady for commands.", timestamp: '10:42 AM' }
+        { 
+            id: '1', 
+            role: 'assistant', 
+            content: "👋 **Vezora OS v1.0** initialized. Systems Nominal.\n\n✅ Neural core: *Active*\n✅ Voice engine: *Ready*\n✅ Memory banks: *Synced*\n\nReady for commands. Try asking me something!", 
+            timestamp: '10:42 AM' 
+        }
     ]);
     const [isTyping, setIsTyping] = useState(false);
 
@@ -35,7 +40,15 @@ export const ChatPage = () => {
 
         // Simulate AI Response with REAL Voice
         setIsTyping(true);
-        const responseText = "Processing request... system check complete."; // Mock response for now
+        
+        // Generate smart demo responses
+        const demoResponses = [
+            "**Processing request...** ⚡\n\nHere are some things I can help with:\n- 📝 Take notes and remember context\n- 🔍 Search and analyze information\n- 💬 Have natural conversations\n- 🎯 Execute commands and workflows",
+            "I understand! Let me help you with that. 🎯\n\nHere's what I found:\n1. First item with **bold text**\n2. Second item with *italic emphasis*\n3. Third item with `inline code`\n\nIs there anything specific you'd like to explore?",
+            "Great question! 🤔\n\nLet me break this down:\n\n**Key Points:**\n- Machine learning models process patterns\n- Neural networks learn from data\n- AI can assist but not replace human creativity\n\n*Would you like me to elaborate on any of these?*"
+        ];
+        
+        const responseText = demoResponses[Math.floor(Math.random() * demoResponses.length)];
 
         setTimeout(() => {
             setIsTyping(false);
@@ -43,7 +56,7 @@ export const ChatPage = () => {
             const newAiMsg: Message = {
                 id: (Date.now() + 1).toString(),
                 role: 'assistant',
-                content: responseText + "\nExecuting command protocol.",
+                content: responseText,
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             };
             setMessages(prev => [...prev, newAiMsg]);
@@ -67,7 +80,11 @@ export const ChatPage = () => {
 
             {/* Main Chat Stream */}
             <div className="flex-1 flex flex-col h-full relative z-10">
-                <ChatBox messages={messages} isTyping={isTyping} />
+                <ChatBox 
+                    messages={messages} 
+                    isTyping={isTyping}
+                    onReplayMessage={(content) => speak(content)}
+                />
 
                 <div className="sticky bottom-0 w-full z-20">
                     <InputPanel

@@ -1,6 +1,13 @@
-import { Volume2, Monitor, Cpu } from 'lucide-react';
+import { Volume2, Palette, Sparkles, Globe, Shield, Moon, Sun } from 'lucide-react';
+import { useState } from 'react';
+import { motion } from 'framer-motion';
 
 export const SettingsPage = () => {
+    const [theme, setTheme] = useState('dark-glow');
+    const [personality, setPersonality] = useState('friendly');
+    const [language, setLanguage] = useState('en');
+    const [voiceSpeed, setVoiceSpeed] = useState(1.0);
+
     return (
         <div className="flex-1 h-full overflow-y-auto p-8 lg:p-12">
             <header className="mb-10">
@@ -12,41 +19,125 @@ export const SettingsPage = () => {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 max-w-6xl">
 
-                {/* Visual Interface */}
-                <div className="bg-[#1A1A1A] border border-white/5 rounded-2xl overflow-hidden">
+                {/* Theme Selector */}
+                <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 }}
+                    className="bg-gradient-to-br from-[#1A1A1A] to-[#151515] border border-white/5 rounded-2xl overflow-hidden hover:border-primary/30 transition-all"
+                >
                     <div className="p-6 border-b border-white/5 bg-white/[0.02]">
                         <h2 className="flex items-center gap-2 font-semibold">
-                            <Monitor className="text-primary" size={20} /> Interface
+                            <Palette className="text-primary" size={20} /> Theme
                         </h2>
                     </div>
                     <div className="p-6 space-y-6">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <div className="text-sm font-medium">Appearance Mode</div>
-                                <div className="text-xs text-text/50">Midnight Hologram is active</div>
+                        <div>
+                            <label className="text-sm font-medium mb-3 block">Appearance Mode</label>
+                            <div className="grid grid-cols-2 gap-3">
+                                {[
+                                    { id: 'dark-glow', name: 'Dark Glow', icon: Moon, gradient: 'from-purple-500/20 to-blue-500/20' },
+                                    { id: 'midnight', name: 'Midnight', icon: Moon, gradient: 'from-gray-800/20 to-black/20' },
+                                    { id: 'neon', name: 'Neon', icon: Sparkles, gradient: 'from-pink-500/20 to-cyan-500/20' },
+                                    { id: 'light', name: 'Light', icon: Sun, gradient: 'from-white/20 to-gray-100/20' }
+                                ].map(themeOption => (
+                                    <motion.button
+                                        key={themeOption.id}
+                                        whileHover={{ scale: 1.02 }}
+                                        whileTap={{ scale: 0.98 }}
+                                        onClick={() => setTheme(themeOption.id)}
+                                        className={`relative p-4 rounded-xl border-2 transition-all ${
+                                            theme === themeOption.id 
+                                                ? 'border-primary bg-primary/10 shadow-[0_0_20px_rgba(142,68,255,0.3)]' 
+                                                : 'border-white/10 bg-white/5 hover:border-white/20'
+                                        }`}
+                                    >
+                                        <div className={`absolute inset-0 rounded-xl bg-gradient-to-br ${themeOption.gradient} opacity-50`} />
+                                        <div className="relative flex flex-col items-center gap-2">
+                                            <themeOption.icon size={20} />
+                                            <span className="text-xs font-medium">{themeOption.name}</span>
+                                        </div>
+                                        {theme === themeOption.id && (
+                                            <motion.div
+                                                layoutId="theme-selected"
+                                                className="absolute top-2 right-2 w-2 h-2 bg-primary rounded-full shadow-[0_0_10px_rgba(142,68,255,0.8)]"
+                                            />
+                                        )}
+                                    </motion.button>
+                                ))}
                             </div>
-                            <select className="bg-black/40 border border-white/10 rounded-lg px-3 py-1 text-sm">
-                                <option>Midnight Hologram</option>
-                                <option>Cyberpunk Neon</option>
-                                <option>Minimalist White</option>
-                            </select>
                         </div>
-                        <div className="flex items-center justify-between">
+                        
+                        <div className="flex items-center justify-between pt-4 border-t border-white/5">
                             <div>
-                                <div className="text-sm font-medium">UI Scaling</div>
-                                <div className="text-xs text-text/50">Adjust component density</div>
+                                <div className="text-sm font-medium">Reduce Motion</div>
+                                <div className="text-xs text-text/50">Minimize animations</div>
                             </div>
-                            <div className="flex gap-2">
-                                <button className="px-3 py-1 rounded-md bg-white/10 text-xs">Compact</button>
-                                <button className="px-3 py-1 rounded-md bg-primary text-white text-xs">Normal</button>
-                                <button className="px-3 py-1 rounded-md bg-white/10 text-xs">Large</button>
+                            <button className="w-12 h-6 bg-white/10 rounded-full relative transition-colors hover:bg-white/20">
+                                <div className="absolute left-1 top-1 w-4 h-4 bg-white/50 rounded-full shadow-sm transition-all" />
+                            </button>
+                        </div>
+                    </div>
+                </motion.div>
+
+                {/* Personality Selector */}
+                <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.15 }}
+                    className="bg-gradient-to-br from-[#1A1A1A] to-[#151515] border border-white/5 rounded-2xl overflow-hidden hover:border-secondary/30 transition-all"
+                >
+                    <div className="p-6 border-b border-white/5 bg-white/[0.02]">
+                        <h2 className="flex items-center gap-2 font-semibold">
+                            <Sparkles className="text-secondary" size={20} /> Personality
+                        </h2>
+                    </div>
+                    <div className="p-6 space-y-6">
+                        <div>
+                            <label className="text-sm font-medium mb-3 block">AI Response Style</label>
+                            <div className="space-y-2">
+                                {[
+                                    { id: 'friendly', name: 'Friendly', desc: 'Warm, casual, and conversational', emoji: '😊' },
+                                    { id: 'professional', name: 'Professional', desc: 'Formal and business-like', emoji: '💼' },
+                                    { id: 'sassy', name: 'Sassy', desc: 'Playful with attitude', emoji: '😎' },
+                                    { id: 'concise', name: 'Concise', desc: 'Brief and to the point', emoji: '⚡' }
+                                ].map(pers => (
+                                    <motion.button
+                                        key={pers.id}
+                                        whileHover={{ x: 4 }}
+                                        onClick={() => setPersonality(pers.id)}
+                                        className={`w-full text-left p-3 rounded-xl border transition-all ${
+                                            personality === pers.id 
+                                                ? 'border-secondary bg-secondary/10 shadow-[0_0_15px_rgba(94,208,243,0.2)]' 
+                                                : 'border-white/10 bg-white/5 hover:border-white/20'
+                                        }`}
+                                    >
+                                        <div className="flex items-start gap-3">
+                                            <span className="text-2xl">{pers.emoji}</span>
+                                            <div className="flex-1">
+                                                <div className="text-sm font-medium flex items-center gap-2">
+                                                    {pers.name}
+                                                    {personality === pers.id && (
+                                                        <span className="text-[10px] bg-secondary/20 text-secondary px-2 py-0.5 rounded-full">Active</span>
+                                                    )}
+                                                </div>
+                                                <div className="text-xs text-text/50 mt-0.5">{pers.desc}</div>
+                                            </div>
+                                        </div>
+                                    </motion.button>
+                                ))}
                             </div>
                         </div>
                     </div>
-                </div>
+                </motion.div>
 
                 {/* Audio Engine */}
-                <div className="bg-[#1A1A1A] border border-white/5 rounded-2xl overflow-hidden">
+                <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 }}
+                    className="bg-gradient-to-br from-[#1A1A1A] to-[#151515] border border-white/5 rounded-2xl overflow-hidden hover:border-secondary/30 transition-all"
+                >
                     <div className="p-6 border-b border-white/5 bg-white/[0.02]">
                         <h2 className="flex items-center gap-2 font-semibold">
                             <Volume2 className="text-secondary" size={20} /> Audio Engine
@@ -54,47 +145,163 @@ export const SettingsPage = () => {
                     </div>
                     <div className="p-6 space-y-6">
                         <div>
-                            <div className="flex justify-between mb-2">
-                                <span className="text-sm">Speech Rate</span>
-                                <span className="text-xs font-mono text-text/50">1.0x</span>
+                            <div className="flex justify-between mb-3">
+                                <span className="text-sm font-medium">Voice Speed</span>
+                                <motion.span 
+                                    key={voiceSpeed}
+                                    initial={{ scale: 1.2, color: '#5ED0F3' }}
+                                    animate={{ scale: 1, color: '#A0A0A0' }}
+                                    className="text-xs font-mono text-text/50 px-2 py-1 bg-secondary/10 rounded"
+                                >
+                                    {voiceSpeed.toFixed(1)}x
+                                </motion.span>
                             </div>
-                            <input type="range" className="w-full accent-secondary h-1 bg-white/10 rounded-lg appearance-none cursor-pointer" />
+                            <input 
+                                type="range" 
+                                min="0.5" 
+                                max="2.0" 
+                                step="0.1"
+                                value={voiceSpeed}
+                                onChange={(e) => setVoiceSpeed(parseFloat(e.target.value))}
+                                className="w-full accent-secondary h-2 bg-white/10 rounded-lg appearance-none cursor-pointer hover:accent-secondary/80"
+                            />
+                            <div className="flex justify-between text-[10px] text-text/40 mt-1">
+                                <span>Slower</span>
+                                <span>Faster</span>
+                            </div>
                         </div>
+                        
                         <div>
-                            <div className="flex justify-between mb-2">
-                                <span className="text-sm">Pitch Variance</span>
-                                <span className="text-xs font-mono text-text/50">High</span>
+                            <label className="text-sm font-medium mb-2 block">Voice Style</label>
+                            <select className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-secondary transition-colors">
+                                <option value="nova">Nova (Energetic)</option>
+                                <option value="shimmer">Shimmer (Warm)</option>
+                                <option value="echo">Echo (Deep)</option>
+                                <option value="breeze">Breeze (Soft)</option>
+                                <option value="neon">Neon (Robotic)</option>
+                            </select>
+                        </div>
+                        
+                        <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                            <div>
+                                <div className="text-sm font-medium">Auto-speak Responses</div>
+                                <div className="text-xs text-text/50">Read replies aloud</div>
                             </div>
-                            <input type="range" className="w-full accent-secondary h-1 bg-white/10 rounded-lg appearance-none cursor-pointer" />
+                            <button className="w-12 h-6 bg-secondary/20 rounded-full relative transition-colors hover:bg-secondary/30">
+                                <div className="absolute right-1 top-1 w-4 h-4 bg-secondary rounded-full shadow-sm shadow-secondary/50 transition-all" />
+                            </button>
                         </div>
                     </div>
-                </div>
+                </motion.div>
 
-                {/* Core Logic */}
-                <div className="col-span-full bg-[#1A1A1A] border border-white/5 rounded-2xl overflow-hidden">
+                {/* Language Settings */}
+                <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.25 }}
+                    className="bg-gradient-to-br from-[#1A1A1A] to-[#151515] border border-white/5 rounded-2xl overflow-hidden hover:border-primary/30 transition-all"
+                >
                     <div className="p-6 border-b border-white/5 bg-white/[0.02]">
                         <h2 className="flex items-center gap-2 font-semibold">
-                            <Cpu className="text-red-400" size={20} /> Neural Permissions
+                            <Globe className="text-primary" size={20} /> Language
+                        </h2>
+                    </div>
+                    <div className="p-6 space-y-6">
+                        <div>
+                            <label className="text-sm font-medium mb-2 block">Interface Language</label>
+                            <select 
+                                value={language}
+                                onChange={(e) => setLanguage(e.target.value)}
+                                className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-primary transition-colors"
+                            >
+                                <option value="en">🇺🇸 English (US)</option>
+                                <option value="en-gb">🇬🇧 English (UK)</option>
+                                <option value="es">🇪🇸 Spanish</option>
+                                <option value="fr">🇫🇷 French</option>
+                                <option value="de">🇩🇪 German</option>
+                                <option value="ja">🇯🇵 Japanese</option>
+                                <option value="zh">🇨🇳 Chinese</option>
+                                <option value="hi">🇮🇳 Hindi</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label className="text-sm font-medium mb-2 block">Time Format</label>
+                            <div className="flex gap-2">
+                                <button className="flex-1 px-3 py-2 rounded-lg bg-primary/20 border border-primary/30 text-primary text-sm font-medium">
+                                    12-hour
+                                </button>
+                                <button className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-text/60 text-sm hover:bg-white/10">
+                                    24-hour
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                            <div>
+                                <div className="text-sm font-medium">Auto-translate</div>
+                                <div className="text-xs text-text/50">Detect and translate</div>
+                            </div>
+                            <button className="w-12 h-6 bg-primary/20 rounded-full relative transition-colors hover:bg-primary/30">
+                                <div className="absolute right-1 top-1 w-4 h-4 bg-primary rounded-full shadow-sm shadow-primary/50 transition-all" />
+                            </button>
+                        </div>
+                    </div>
+                </motion.div>
+
+                {/* Privacy & Permissions */}
+                <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                    className="col-span-full bg-gradient-to-br from-[#1A1A1A] to-[#151515] border border-white/5 rounded-2xl overflow-hidden hover:border-red-400/30 transition-all"
+                >
+                    <div className="p-6 border-b border-white/5 bg-white/[0.02]">
+                        <h2 className="flex items-center gap-2 font-semibold">
+                            <Shield className="text-red-400" size={20} /> Privacy & Permissions
                         </h2>
                     </div>
                     <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                         {[
-                            { label: 'File System Access', desc: 'Read/Write access to user documents', active: true },
-                            { label: 'Application Launcher', desc: 'Permission to start external processes', active: true },
-                            { label: 'Network Access', desc: 'Allow Gemini Pro web searches', active: true },
+                            { label: 'File System Access', desc: 'Read/Write access to user documents', active: true, color: 'green' },
+                            { label: 'Application Launcher', desc: 'Permission to start external processes', active: true, color: 'green' },
+                            { label: 'Network Access', desc: 'Allow web searches and API calls', active: true, color: 'yellow' },
+                            { label: 'Microphone', desc: 'Voice input and commands', active: true, color: 'green' },
+                            { label: 'Screen Recording', desc: 'Context awareness from screen', active: false, color: 'red' },
+                            { label: 'Location Services', desc: 'Local time and weather data', active: false, color: 'red' },
                         ].map((perm, i) => (
-                            <div key={i} className="flex items-start gap-4 p-4 border border-white/5 rounded-xl bg-black/20">
-                                <div className={`mt-1 w-10 h-6 ${perm.active ? 'bg-green-500/20' : 'bg-red-500/20'} rounded-full relative transition-colors`}>
-                                    <div className={`absolute top-1 w-4 h-4 rounded-full shadow-sm bg-white transition-all ${perm.active ? 'left-5' : 'left-1'}`} />
-                                </div>
-                                <div>
-                                    <div className="text-sm font-medium">{perm.label}</div>
+                            <motion.div 
+                                key={i}
+                                initial={{ opacity: 0, scale: 0.9 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                transition={{ delay: 0.35 + i * 0.05 }}
+                                className="group flex items-start gap-4 p-4 border border-white/5 rounded-xl bg-black/20 hover:bg-black/30 hover:border-white/10 transition-all cursor-pointer"
+                            >
+                                <button className={`mt-1 w-12 h-6 ${perm.active ? 'bg-green-500/20' : 'bg-white/10'} rounded-full relative transition-all group-hover:scale-105`}>
+                                    <motion.div 
+                                        className={`absolute top-1 w-4 h-4 rounded-full shadow-lg transition-all ${
+                                            perm.active 
+                                                ? 'bg-green-400 left-6 shadow-green-400/50' 
+                                                : 'bg-white/50 left-1'
+                                        }`}
+                                        whileHover={{ scale: 1.1 }}
+                                    />
+                                </button>
+                                <div className="flex-1">
+                                    <div className="text-sm font-medium flex items-center gap-2">
+                                        {perm.label}
+                                        {perm.active && (
+                                            <span className="text-[9px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                                                Enabled
+                                            </span>
+                                        )}
+                                    </div>
                                     <div className="text-xs text-text/50 leading-tight mt-1">{perm.desc}</div>
                                 </div>
-                            </div>
+                            </motion.div>
                         ))}
                     </div>
-                </div>
+                </motion.div>
 
             </div>
         </div>
