@@ -1,12 +1,33 @@
 import { Volume2, Palette, Sparkles, Globe, Shield, Moon, Sun } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { useVoice } from '../hooks/useVoice';
 
 export const SettingsPage = () => {
     const [theme, setTheme] = useState('dark-glow');
     const [personality, setPersonality] = useState('friendly');
     const [language, setLanguage] = useState('en');
-    const [voiceSpeed, setVoiceSpeed] = useState(1.0);
+    const { 
+        availableVoices, 
+        selectedVoice, 
+        setSelectedVoice,
+        voiceSettings,
+        updateVoiceSettings,
+        speak,
+        isSpeaking
+    } = useVoice();
+
+    // Load saved tone on mount
+    useEffect(() => {
+        const savedTone = localStorage.getItem('vezora_voice_tone');
+        if (savedTone) {
+            setPersonality(savedTone);
+        }
+    }, []);
+
+    const testVoice = () => {
+        speak("Hello! I'm Vezora, your AI assistant. This is how I sound with the current voice settings.");
+    };
 
     return (
         <div className="flex-1 h-full overflow-y-auto p-8 lg:p-12">
@@ -97,15 +118,24 @@ export const SettingsPage = () => {
                             <label className="text-sm font-medium mb-3 block">AI Response Style</label>
                             <div className="space-y-2">
                                 {[
-                                    { id: 'friendly', name: 'Friendly', desc: 'Warm, casual, and conversational', emoji: '😊' },
-                                    { id: 'professional', name: 'Professional', desc: 'Formal and business-like', emoji: '💼' },
-                                    { id: 'sassy', name: 'Sassy', desc: 'Playful with attitude', emoji: '😎' },
-                                    { id: 'concise', name: 'Concise', desc: 'Brief and to the point', emoji: '⚡' }
+                                    { id: 'friendly', name: 'Friendly', desc: 'Warm, casual, and slightly playful', emoji: '😊' },
+                                    { id: 'professional', name: 'Professional', desc: 'Concise, neutral, task-focused', emoji: '💼' },
+                                    { id: 'calm', name: 'Calm', desc: 'Slow, reassuring with minimal emotion', emoji: '🧘' },
+                                    { id: 'sassy', name: 'Sassy', desc: 'Confident, witty, very short replies', emoji: '😎' }
                                 ].map(pers => (
                                     <motion.button
                                         key={pers.id}
                                         whileHover={{ x: 4 }}
-                                        onClick={() => setPersonality(pers.id)}
+                                        onClick={() => {
+                                            setPersonality(pers.id);
+                                            localStorage.setItem('vezora_voice_tone', pers.id);
+                                            // Save to backend
+                                            fetch('http://localhost:5000/api/settings', {
+                                                method: 'PUT',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ voiceTone: pers.id })
+                                            }).catch(e => console.error('Failed to save tone:', e));
+                                        }}
                                         className={`w-full text-left p-3 rounded-xl border transition-all ${
                                             personality === pers.id 
                                                 ? 'border-secondary bg-secondary/10 shadow-[0_0_15px_rgba(94,208,243,0.2)]' 
@@ -148,12 +178,12 @@ export const SettingsPage = () => {
                             <div className="flex justify-between mb-3">
                                 <span className="text-sm font-medium">Voice Speed</span>
                                 <motion.span 
-                                    key={voiceSpeed}
+                                    key={voiceSettings.rate}
                                     initial={{ scale: 1.2, color: '#5ED0F3' }}
                                     animate={{ scale: 1, color: '#A0A0A0' }}
                                     className="text-xs font-mono text-text/50 px-2 py-1 bg-secondary/10 rounded"
                                 >
-                                    {voiceSpeed.toFixed(1)}x
+                                    {voiceSettings.rate.toFixed(1)}x
                                 </motion.span>
                             </div>
                             <input 
@@ -161,8 +191,8 @@ export const SettingsPage = () => {
                                 min="0.5" 
                                 max="2.0" 
                                 step="0.1"
-                                value={voiceSpeed}
-                                onChange={(e) => setVoiceSpeed(parseFloat(e.target.value))}
+                                value={voiceSettings.rate}
+                                onChange={(e) => updateVoiceSettings({ rate: parseFloat(e.target.value) })}
                                 className="w-full accent-secondary h-2 bg-white/10 rounded-lg appearance-none cursor-pointer hover:accent-secondary/80"
                             />
                             <div className="flex justify-between text-[10px] text-text/40 mt-1">
@@ -172,14 +202,101 @@ export const SettingsPage = () => {
                         </div>
                         
                         <div>
-                            <label className="text-sm font-medium mb-2 block">Voice Style</label>
-                            <select className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-secondary transition-colors">
-                                <option value="nova">Nova (Energetic)</option>
-                                <option value="shimmer">Shimmer (Warm)</option>
-                                <option value="echo">Echo (Deep)</option>
-                                <option value="breeze">Breeze (Soft)</option>
-                                <option value="neon">Neon (Robotic)</option>
+                            <label className="text-sm font-medium mb-2 block">
+                                Voice Selection
+                                {selectedVoice && (
+                                    <span className="ml-2 text-[10px] text-text/50">
+                                        ({selectedVoice.lang})
+                                    </span>
+                                )}
+                            </label>
+                            <select 
+                                value={selectedVoice?.name || ''}
+                                onChange={(e) => {
+                                    const voice = availableVoices.find(v => v.name === e.target.value);
+                                    if (voice) setSelectedVoice(voice);
+                                }}
+                                className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-secondary transition-colors"
+                            >
+                                {availableVoices.length === 0 && (
+                                    <option>Loading voices...</option>
+                                )}
+                                {/* Female Voices First */}
+                                {availableVoices.filter(v => {
+                                    const name = v.name.toLowerCase();
+                                    return name.includes('female') || 
+                                           name.includes('woman') ||
+                                           name.includes('zira') ||
+                                           name.includes('hazel') ||
+                                           name.includes('susan') ||
+                                           name.includes('heera') ||
+                                           name.includes('samantha') ||
+                                           name.includes('karen') ||
+                                           name.includes('victoria') ||
+                                           name.includes('natasha') ||
+                                           name.includes('salli') ||
+                                           name.includes('joanna');
+                                }).map((voice) => (
+                                    <option key={voice.name} value={voice.name}>
+                                        👩 {voice.name}
+                                    </option>
+                                ))}
+                                {/* Male Voices */}
+                                {availableVoices.filter(v => {
+                                    const name = v.name.toLowerCase();
+                                    return (name.includes('male') || 
+                                            name.includes('man') ||
+                                            name.includes('david') ||
+                                            name.includes('mark') ||
+                                            name.includes('george') ||
+                                            name.includes('ravi') ||
+                                            name.includes('alex') ||
+                                            name.includes('fred')) &&
+                                           !name.includes('female');
+                                }).map((voice) => (
+                                    <option key={voice.name} value={voice.name}>
+                                        👨 {voice.name}
+                                    </option>
+                                ))}
+                                {/* All Other Voices */}
+                                {availableVoices.filter(v => {
+                                    const name = v.name.toLowerCase();
+                                    const isFemale = name.includes('female') || name.includes('woman') ||
+                                                    name.includes('zira') || name.includes('hazel') ||
+                                                    name.includes('susan') || name.includes('heera') ||
+                                                    name.includes('samantha') || name.includes('karen') ||
+                                                    name.includes('victoria') || name.includes('natasha') ||
+                                                    name.includes('salli') || name.includes('joanna');
+                                    const isMale = (name.includes('male') || name.includes('man') ||
+                                                   name.includes('david') || name.includes('mark') ||
+                                                   name.includes('george') || name.includes('ravi') ||
+                                                   name.includes('alex') || name.includes('fred')) &&
+                                                   !name.includes('female');
+                                    return !isFemale && !isMale;
+                                }).map((voice) => (
+                                    <option key={voice.name} value={voice.name}>
+                                        🗣️ {voice.name}
+                                    </option>
+                                ))}
                             </select>
+                            <div className="flex items-center justify-between mt-2">
+                                <p className="text-[10px] text-text/40">
+                                    👩 = Female • 👨 = Male • 🗣️ = Other
+                                </p>
+                                <motion.button
+                                    whileHover={{ scale: 1.05 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={testVoice}
+                                    disabled={isSpeaking}
+                                    className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-all ${
+                                        isSpeaking 
+                                            ? 'bg-secondary/30 text-secondary/50 cursor-not-allowed' 
+                                            : 'bg-secondary/20 text-secondary hover:bg-secondary/30 border border-secondary/30'
+                                    }`}
+                                >
+                                    {isSpeaking ? '🎤 Speaking...' : '🎤 Test Voice'}
+                                </motion.button>
+                            </div>
                         </div>
                         
                         <div className="flex items-center justify-between pt-4 border-t border-white/5">

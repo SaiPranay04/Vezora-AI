@@ -6,13 +6,29 @@ import { MemoryPage } from './pages/MemoryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { LaunchSplash } from './components/LaunchSplash';
 import { MiniMode } from './components/MiniMode';
-import { Minimize2 } from 'lucide-react';
+import { VoiceCallMode } from './components/VoiceCallMode';
+import { useVoiceCall } from './hooks/useVoiceCall';
+import { Minimize2, Phone } from 'lucide-react';
 import './index.css';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('chat');
   const [showSplash, setShowSplash] = useState(true);
   const [isMiniMode, setIsMiniMode] = useState(false);
+  
+  // Voice Call Mode
+  const {
+    isVoiceCallActive,
+    transcript,
+    response,
+    isMuted,
+    isListening,
+    isSpeaking,
+    startVoiceCall,
+    endVoiceCall,
+    toggleMute,
+    toggleListen
+  } = useVoiceCall();
 
   // Hide splash after 3 seconds
   useEffect(() => {
@@ -48,6 +64,19 @@ function App() {
     <>
       {/* Launch Splash Screen */}
       <LaunchSplash isVisible={showSplash} />
+
+      {/* Voice Call Mode */}
+      <VoiceCallMode
+        isOpen={isVoiceCallActive}
+        onClose={endVoiceCall}
+        isListening={isListening}
+        isSpeaking={isSpeaking}
+        transcript={transcript}
+        response={response}
+        onToggleListen={toggleListen}
+        onToggleMute={toggleMute}
+        isMuted={isMuted}
+      />
 
       {/* Mini Mode */}
       <AnimatePresence>
@@ -120,6 +149,18 @@ function App() {
                 </div>
 
                 <div className="flex items-center gap-4">
+                  {/* Voice Call Button */}
+                  <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={startVoiceCall}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-r from-primary/20 to-secondary/20 hover:from-primary/30 hover:to-secondary/30 border border-primary/30 transition-all group"
+                    title="Start voice call"
+                  >
+                    <Phone size={16} className="text-primary group-hover:text-white transition-colors" />
+                    <span className="text-xs font-medium text-text/70 group-hover:text-white transition-colors">Voice Call</span>
+                  </motion.button>
+                  
                   {/* Minimize Button */}
                   <motion.button
                     whileHover={{ scale: 1.05 }}

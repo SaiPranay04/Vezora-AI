@@ -1,0 +1,17 @@
+{
+    "user_facts": [
+        "Preferred name: Archon",
+        "Occupation: Software Architect",
+        "Favorite language: TypeScript",
+        "Work hours: Night owl"
+    ],
+    "preferences": {
+        "voice_speed": 1.1,
+        "theme": "dark_mode"
+    },
+    "recent_topics": [
+        "Quantum Computing",
+        "React Performance",
+        "SpaceX Launch"
+    ]
+}

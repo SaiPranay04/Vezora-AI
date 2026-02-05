@@ -26,7 +26,7 @@ export const useVoice = () => {
     const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([]);
     const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
     const [voiceSettings, setVoiceSettings] = useState({
-        rate: 1.0,
+        rate: 1.05,  // Optimized for natural, slightly faster speech
         pitch: 1.0,
         volume: 1.0,
         lang: 'en-US'
@@ -36,15 +36,44 @@ export const useVoice = () => {
     const synth = window.speechSynthesis;
     const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-    // Load available voices
+    // Load available voices and restore saved voice from localStorage
     useEffect(() => {
         const loadVoices = () => {
             const voices = synth.getVoices();
             setAvailableVoices(voices);
-            // Default to first English voice or first available
-            const defaultVoice = voices.find(v => v.lang.startsWith('en')) || voices[0];
-            if (defaultVoice && !selectedVoice) {
-                setSelectedVoice(defaultVoice);
+            
+            if (voices.length === 0) return; // Wait for voices to load
+            
+            // Try to restore saved voice from localStorage
+            const savedVoiceName = localStorage.getItem('vezora_selected_voice');
+            let voiceToSet: SpeechSynthesisVoice | null = null;
+            
+            if (savedVoiceName) {
+                // Find the saved voice
+                voiceToSet = voices.find(v => v.name === savedVoiceName) || null;
+            }
+            
+            // Fallback: Find a female voice if no saved voice
+            if (!voiceToSet) {
+                voiceToSet = voices.find(v => 
+                    v.name.toLowerCase().includes('zira') ||
+                    v.name.toLowerCase().includes('hazel') ||
+                    v.name.toLowerCase().includes('susan') ||
+                    v.name.toLowerCase().includes('heera') ||
+                    v.name.toLowerCase().includes('samantha') ||
+                    v.name.toLowerCase().includes('karen') ||
+                    v.name.toLowerCase().includes('female')
+                ) || null;
+            }
+            
+            // Fallback: First English voice
+            if (!voiceToSet) {
+                voiceToSet = voices.find(v => v.lang.startsWith('en')) || voices[0];
+            }
+            
+            if (voiceToSet && !selectedVoice) {
+                setSelectedVoice(voiceToSet);
+                console.log('🎤 Voice loaded:', voiceToSet.name);
             }
         };
 
@@ -153,7 +182,29 @@ export const useVoice = () => {
     }, [synth, isSpeaking]);
 
     const updateVoiceSettings = useCallback((settings: Partial<typeof voiceSettings>) => {
-        setVoiceSettings(prev => ({ ...prev, ...settings }));
+        setVoiceSettings(prev => {
+            const newSettings = { ...prev, ...settings };
+            // Save rate to localStorage
+            localStorage.setItem('vezora_voice_rate', newSettings.rate.toString());
+            return newSettings;
+        });
+    }, []);
+
+    // Wrapper for setSelectedVoice that saves to localStorage
+    const selectVoice = useCallback((voice: SpeechSynthesisVoice | null) => {
+        if (voice) {
+            setSelectedVoice(voice);
+            localStorage.setItem('vezora_selected_voice', voice.name);
+            console.log('🎤 Voice saved:', voice.name);
+        }
+    }, []);
+
+    // Load voice rate from localStorage on mount
+    useEffect(() => {
+        const savedRate = localStorage.getItem('vezora_voice_rate');
+        if (savedRate) {
+            updateVoiceSettings({ rate: parseFloat(savedRate) });
+        }
     }, []);
 
     return {
@@ -170,7 +221,7 @@ export const useVoice = () => {
         pauseSpeech,
         resumeSpeech,
         setTranscript,
-        setSelectedVoice,
+        setSelectedVoice: selectVoice, // Use wrapper instead
         updateVoiceSettings
     };
 };
