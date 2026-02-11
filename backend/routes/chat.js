@@ -9,6 +9,8 @@ import { generateGeminiCompletion, parseIntentWithGemini, isGeminiAvailable } fr
 import { getMemory } from '../controllers/memoryController.js';
 import { addLog } from '../controllers/logsController.js';
 import { getSettings } from '../controllers/settingsController.js';
+import { executeAgent } from '../utils/langchainAgent.js';
+import { isAuthenticated } from '../utils/googleAuth.js';
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 
@@ -90,6 +92,64 @@ router.post('/', async (req, res) => {
     // Get user settings
     const settings = await getSettings(userId);
     const voiceCallMode = process.env.VOICE_CALL_MODE === 'true' && settings.voiceCallEnabled;
+
+    // Check if this is a tool-related query (Gmail, Calendar, etc.)
+    const lastUserMessage = (message || messages[messages.length - 1]?.content || '').toLowerCase();
+    const isToolQuery = 
+      lastUserMessage.includes('email') || 
+      lastUserMessage.includes('gmail') || 
+      lastUserMessage.includes('inbox') ||
+      lastUserMessage.includes('mail') ||
+      lastUserMessage.includes('calendar') ||
+      lastUserMessage.includes('schedule') ||
+      lastUserMessage.includes('meeting') ||
+      lastUserMessage.includes('event');
+
+    // If tool query and user is authenticated, use LangChain agent
+    if (isToolQuery) {
+      const authenticated = await isAuthenticated();
+      console.log('🔍 Tool query detected:', lastUserMessage, '| Authenticated:', authenticated);
+      
+      if (authenticated) {
+        console.log('🔧 Using LangChain agent for tool execution');
+        const startTime = Date.now();
+        
+        try {
+          const agentResponse = await executeAgent(lastUserMessage);
+          console.log('✅ Agent response:', agentResponse.substring(0, 200));
+          const responseTime = Date.now() - startTime;
+          
+          return res.json({
+            id: Date.now().toString(),
+            role: 'assistant',
+            content: agentResponse,
+            timestamp: new Date().toISOString(),
+            model: 'langchain-agent',
+            provider: 'agent',
+            intent: { action: 'tool_use', category: 'integration' },
+            responseTime,
+            voiceEnabled: voiceCallMode,
+            voiceText: agentResponse
+          });
+        } catch (agentError) {
+          console.error('❌ Agent error:', agentError);
+          console.error('❌ Agent error stack:', agentError.stack);
+          // Fall through to normal AI conversation if agent fails
+        }
+      } else if (isToolQuery) {
+        // User asking about Gmail/Calendar but not authenticated
+        return res.json({
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: 'I can help with that, but you need to authenticate with Google first. Please visit http://localhost:5000/auth-test.html to connect your Google account.',
+          timestamp: new Date().toISOString(),
+          model: 'system',
+          provider: 'system',
+          intent: { action: 'auth_required', category: 'system' },
+          responseTime: 0
+        });
+      }
+    }
 
     // Optionally add memory context (usually disabled for speed when using conversation history)
     if (includeMemory) {
@@ -220,6 +280,58 @@ router.post('/stream', async (req, res) => {
       messages = [{ role: 'user', content: message }];
     } else {
       return res.status(400).json({ error: 'Message or messages array is required' });
+    }
+
+    // Check if this is a tool-related query (Gmail, Calendar, etc.)
+    const lastUserMessage = (message || messages[messages.length - 1]?.content || '').toLowerCase();
+    const isToolQuery = 
+      lastUserMessage.includes('email') || 
+      lastUserMessage.includes('gmail') || 
+      lastUserMessage.includes('inbox') ||
+      lastUserMessage.includes('mail') ||
+      lastUserMessage.includes('calendar') ||
+      lastUserMessage.includes('schedule') ||
+      lastUserMessage.includes('meeting') ||
+      lastUserMessage.includes('event');
+
+    // If tool query and user is authenticated, use LangChain agent (non-streaming)
+    if (isToolQuery) {
+      const authenticated = await isAuthenticated();
+      console.log('🔍 [STREAM] Tool query detected:', lastUserMessage, '| Authenticated:', authenticated);
+      
+      if (authenticated) {
+        console.log('🔧 [STREAM] Using LangChain agent for tool execution');
+        
+        try {
+          // Set up SSE headers first
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache');
+          res.setHeader('Connection', 'keep-alive');
+
+          const agentResponse = await executeAgent(lastUserMessage);
+          console.log('✅ [STREAM] Agent response:', agentResponse.substring(0, 200));
+          
+          // Send as single chunk for tool responses
+          res.write(`data: ${JSON.stringify({ type: 'chunk', content: agentResponse })}\n\n`);
+          res.write(`data: ${JSON.stringify({ type: 'done', fullResponse: agentResponse })}\n\n`);
+          res.end();
+          return;
+        } catch (agentError) {
+          console.error('❌ [STREAM] Agent error:', agentError);
+          // Fall through to normal streaming if agent fails
+        }
+      } else if (isToolQuery) {
+        // User asking about Gmail/Calendar but not authenticated
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        
+        const authMessage = 'I can help with that, but you need to authenticate with Google first. Please visit the authentication page to connect your Google account.';
+        res.write(`data: ${JSON.stringify({ type: 'chunk', content: authMessage })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: 'done', fullResponse: authMessage })}\n\n`);
+        res.end();
+        return;
+      }
     }
 
     // Set up SSE headers

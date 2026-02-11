@@ -51,7 +51,8 @@ export async function generateGeminiCompletion(messages, options = {}) {
       temperature = 0.7,
       maxTokens = 1024,
       topP = 0.95,
-      topK = 40
+      topK = 40,
+      useGrounding = false
     } = options;
 
     // Format messages for Gemini
@@ -64,10 +65,19 @@ export async function generateGeminiCompletion(messages, options = {}) {
       maxOutputTokens: maxTokens,
     };
 
-    const result = await model.generateContent({
+    const requestBody = {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig,
-    });
+    };
+
+    // Enable Google Search grounding if requested
+    if (useGrounding && process.env.ENABLE_GEMINI_GROUNDING === 'true') {
+      requestBody.tools = [{
+        googleSearchRetrieval: {}
+      }];
+    }
+
+    const result = await model.generateContent(requestBody);
 
     const response = result.response;
     const text = response.text();

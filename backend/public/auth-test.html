@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vezora - Google Authentication</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .container {
+      background: white;
+      border-radius: 20px;
+      padding: 40px;
+      max-width: 600px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    }
+    
+    h1 {
+      color: #667eea;
+      margin-bottom: 10px;
+      font-size: 32px;
+    }
+    
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 16px;
+    }
+    
+    .status {
+      padding: 15px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      font-weight: 500;
+    }
+    
+    .status.authenticated {
+      background: #d4edda;
+      color: #155724;
+      border: 2px solid #c3e6cb;
+    }
+    
+    .status.not-authenticated {
+      background: #fff3cd;
+      color: #856404;
+      border: 2px solid #ffeaa7;
+    }
+    
+    .btn {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      transition: transform 0.2s, box-shadow 0.2s;
+      text-decoration: none;
+      display: inline-block;
+      text-align: center;
+    }
+    
+    .btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    .btn:active {
+      transform: translateY(0);
+    }
+    
+    .btn.secondary {
+      background: #6c757d;
+      margin-top: 10px;
+    }
+    
+    .info {
+      background: #e7f3ff;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin: 20px 0;
+      border-radius: 5px;
+    }
+    
+    .info-title {
+      font-weight: 600;
+      color: #1976D2;
+      margin-bottom: 10px;
+    }
+    
+    .info ul {
+      margin-left: 20px;
+      color: #555;
+    }
+    
+    .info li {
+      margin: 5px 0;
+    }
+    
+    .email-preview {
+      background: #f8f9fa;
+      border-radius: 10px;
+      padding: 15px;
+      margin-top: 20px;
+    }
+    
+    .email-item {
+      background: white;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      border-left: 4px solid #667eea;
+    }
+    
+    .email-subject {
+      font-weight: 600;
+      color: #333;
+      margin-bottom: 5px;
+    }
+    
+    .email-from {
+      color: #666;
+      font-size: 14px;
+    }
+    
+    .loading {
+      text-align: center;
+      color: #666;
+      padding: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🤖 Vezora AI</h1>
+    <p class="subtitle">Google Authentication Setup</p>
+    
+    <div id="status" class="status not-authenticated">
+      ⏳ Checking authentication status...
+    </div>
+    
+    <div class="info">
+      <div class="info-title">📧 What You'll Get Access To:</div>
+      <ul>
+        <li>Read your Gmail inbox</li>
+        <li>Send emails on your behalf</li>
+        <li>View and create Google Calendar events</li>
+        <li>Search your emails</li>
+      </ul>
+    </div>
+    
+    <div id="actions"></div>
+    
+    <div id="emails"></div>
+  </div>
+  
+  <script>
+    async function checkAuth() {
+      try {
+        const response = await fetch('/api/auth/status');
+        const data = await response.json();
+        
+        const statusDiv = document.getElementById('status');
+        const actionsDiv = document.getElementById('actions');
+        const emailsDiv = document.getElementById('emails');
+        
+        if (data.authenticated) {
+          statusDiv.className = 'status authenticated';
+          statusDiv.innerHTML = '✅ You are authenticated! Vezora can now access your Gmail.';
+          
+          actionsDiv.innerHTML = `
+            <button class="btn secondary" onclick="testGmail()">🧪 Test Gmail Access</button>
+            <button class="btn secondary" onclick="logout()" style="background: #dc3545;">🚪 Logout</button>
+          `;
+          
+          // Auto-test Gmail
+          testGmail();
+        } else {
+          statusDiv.className = 'status not-authenticated';
+          statusDiv.innerHTML = '❌ Not authenticated. Click below to connect your Google account.';
+          
+          actionsDiv.innerHTML = `
+            <a href="/api/auth/google" class="btn">
+              🔐 Connect Google Account
+            </a>
+            <p style="text-align: center; margin-top: 15px; color: #666; font-size: 14px;">
+              You'll be redirected to Google's secure login page
+            </p>
+          `;
+        }
+      } catch (error) {
+        document.getElementById('status').innerHTML = '❌ Error: ' + error.message;
+      }
+    }
+    
+    async function testGmail() {
+      const emailsDiv = document.getElementById('emails');
+      emailsDiv.innerHTML = '<div class="loading">⏳ Fetching your emails...</div>';
+      
+      try {
+        const response = await fetch('/api/gmail/messages?maxResults=5');
+        const data = await response.json();
+        
+        if (data.authenticated && data.emails) {
+          emailsDiv.innerHTML = `
+            <div class="email-preview">
+              <h3 style="margin-bottom: 15px;">📬 Recent Emails (${data.totalMessages || 0} total)</h3>
+              ${data.emails.map(email => `
+                <div class="email-item">
+                  <div class="email-subject">${email.subject}</div>
+                  <div class="email-from">From: ${email.from}</div>
+                  <div style="color: #888; font-size: 12px; margin-top: 5px;">${new Date(email.date).toLocaleString()}</div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        } else {
+          emailsDiv.innerHTML = '<div class="info">No emails found or not authenticated.</div>';
+        }
+      } catch (error) {
+        emailsDiv.innerHTML = '<div class="status not-authenticated">❌ Error fetching emails: ' + error.message + '</div>';
+      }
+    }
+    
+    async function logout() {
+      if (confirm('Are you sure you want to logout? You will need to re-authenticate.')) {
+        try {
+          await fetch('/api/auth/logout', { method: 'POST' });
+          alert('✅ Logged out successfully!');
+          location.reload();
+        } catch (error) {
+          alert('❌ Error: ' + error.message);
+        }
+      }
+    }
+    
+    // Check auth on page load
+    checkAuth();
+    
+    // Check if we just came back from OAuth callback
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('success')) {
+      setTimeout(() => {
+        alert('✅ Successfully authenticated with Google!');
+      }, 500);
+    }
+  </script>
+</body>
+</html>

@@ -33,12 +33,20 @@ import settingsRoutes from './routes/settings.js';
 import filesRoutes from './routes/files.js';
 import appsRoutes from './routes/apps.js';
 import logsRoutes from './routes/logs.js';
+import authRoutes from './routes/auth.js';
+import gmailRoutes from './routes/gmail.js';
+import calendarRoutes from './routes/calendar.js';
+import searchRoutes from './routes/search.js';
+import workflowsRoutes from './routes/workflows.js';
+import ocrRoutes from './routes/ocr.js';
 
 // Import utilities
 import { initializeDatabase } from './utils/database.js';
 import { ensureDataDirectories } from './utils/fileSystem.js';
 import { initializeGemini, isGeminiAvailable } from './utils/geminiClient.js';
 import { isOllamaHealthy } from './utils/ollamaClient.js';
+import { initializeWorkflowEngine } from './services/workflowEngine.js';
+import { testEncryption } from './utils/encryption.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -75,6 +83,9 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -116,6 +127,17 @@ app.use('/api/files', filesRoutes);
 app.use('/api/apps', appsRoutes);
 app.use('/api/logs', logsRoutes);
 
+// New integrated routes
+app.use('/api/auth', authRoutes);
+app.use('/api/gmail', gmailRoutes);
+app.use('/api/calendar', calendarRoutes);
+app.use('/api/search', searchRoutes);
+app.use('/api/workflows', workflowsRoutes);
+app.use('/api/ocr', ocrRoutes);
+
+// Mount auth callback at root level for Google OAuth (matches redirect URI)
+app.use('/auth', authRoutes);
+
 // Error handling middleware
 app.use((error, req, res, next) => {
   console.error('❌ Error:', error);
@@ -149,12 +171,23 @@ async function startServer() {
     // Initialize database (SQLite)
     await initializeDatabase();
     
+    // Test encryption
+    console.log('🔐 Testing encryption...');
+    const encryptionWorking = testEncryption();
+    if (!encryptionWorking) {
+      console.warn('⚠️  WARNING: Encryption test failed! Check ENCRYPTION_KEY in .env');
+    }
+    
+    // Initialize workflow engine
+    await initializeWorkflowEngine();
+    
     // Start server
     server.listen(PORT, async () => {
       console.log('\n🚀 Vezora AI Backend Server');
       console.log('================================');
       console.log(`✅ Server running on http://localhost:${PORT}`);
       console.log(`✅ WebSocket available at ws://localhost:${PORT}/ws/voice-mode`);
+      console.log(`✅ Auth endpoint: http://localhost:${PORT}/api/auth/google`);
       console.log('');
       
       // Initialize and check AI providers
@@ -182,8 +215,14 @@ async function startServer() {
       console.log(`   🎯 Primary: ${activeProvider}`);
       console.log('');
       
-      console.log(`✅ Voice Call Mode: ${process.env.VOICE_CALL_MODE === 'true' ? 'ENABLED' : 'DISABLED'}`);
-      console.log(`✅ App Launch: ${process.env.ENABLE_APP_LAUNCH === 'true' ? 'ENABLED' : 'DISABLED'}`);
+      console.log('🔧 Features:');
+      console.log(`   ${process.env.VOICE_CALL_MODE === 'true' ? '✅' : '⚪'} Voice Call Mode`);
+      console.log(`   ${process.env.ENABLE_APP_LAUNCH === 'true' ? '✅' : '⚪'} App Launch`);
+      console.log(`   ${process.env.ENABLE_GMAIL === 'true' ? '✅' : '⚪'} Gmail Integration`);
+      console.log(`   ${process.env.ENABLE_CALENDAR === 'true' ? '✅' : '⚪'} Calendar Integration`);
+      console.log(`   ${process.env.ENABLE_WEB_SEARCH === 'true' ? '✅' : '⚪'} Web Search`);
+      console.log(`   ${process.env.ENABLE_WORKFLOWS === 'true' ? '✅' : '⚪'} Workflow Automation`);
+      console.log(`   ${process.env.ENABLE_GEMINI_GROUNDING === 'true' ? '✅' : '⚪'} Gemini Grounding`);
       console.log('================================\n');
     });
   } catch (error) {
