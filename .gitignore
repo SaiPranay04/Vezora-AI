@@ -1,32 +1,29 @@
-# Dependencies
-node_modules/
-backend/node_modules/
-*/node_modules/
-
-# Build outputs
-dist/
-dist-ssr/
-build/
-.vite/
-*.local
-
-# Environment variables (CRITICAL - Contains API keys!)
+# Environment Variables - NEVER COMMIT!
 .env
 .env.local
-.env.development
 .env.production
+.env.development
 .env.test
 backend/.env
 backend/.env.local
-*.env
+backend/.env.production
 
-# User data & storage (IMPORTANT - Personal data!)
-backend/data/logs.json
-backend/data/memory.json
-backend/data/settings.json
-backend/data/audio/
-backend/data/temp/
+# User Data - NEVER COMMIT!
+backend/data/
 backend/data/*.json
+backend/data/google-tokens.json
+backend/data/user-profile.json
+backend/data/memory.json
+backend/data/tasks.json
+backend/data/settings.json
+backend/data/logs.json
+backend/data/workflows.json
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.sql.bak
 
 # Logs
 logs/
@@ -37,32 +34,87 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# OS files
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*~
+# Node modules
+node_modules/
+backend/node_modules/
+dist
+dist-ssr
+*.local
+
+# Build outputs
+build/
+.next/
+out/
+.nuxt/
+.cache/
+.vuepress/dist
+.serverless/
+.fusebox/
+.dynamodb/
+.tern-port
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea/
-.cursor/
+.idea
+.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*.swp
+*.swo
+*~
+
+# OS Files
+Thumbs.db
+desktop.ini
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Certificates and Keys
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+ssl/
+certs/
 
 # Testing
 coverage/
 .nyc_output/
+*.lcov
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
 
-# Cache
-.cache/
-.parcel-cache/
+# IDEs
+.vscode/
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Package manager
+package-lock.json.bak
+yarn.lock.bak
+pnpm-lock.yaml.bak
+
+# Misc
+.vercel
+.turbo
 .eslintcache
-
-# Optional
-package-lock.json.backup

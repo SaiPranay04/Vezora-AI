@@ -4,6 +4,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useVoice } from './useVoice';
+import { useAuth } from '../contexts/AuthContext';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
@@ -21,6 +22,7 @@ export interface UseVoiceCallReturn {
 }
 
 export function useVoiceCall(): UseVoiceCallReturn {
+  const { token } = useAuth();
   const [isVoiceCallActive, setIsVoiceCallActive] = useState(false);
   const [displayTranscript, setDisplayTranscript] = useState('');
   const [response, setResponse] = useState('');
@@ -69,83 +71,34 @@ export function useVoiceCall(): UseVoiceCallReturn {
         speak("One moment"); // Quick feedback
       }
 
-      // Use streaming endpoint for real-time responses
-      const fetchResponse = await fetch(`${BACKEND_URL}/api/chat/stream`, {
+      // Use main /api/chat endpoint (includes coordinator + task creation)
+      const fetchResponse = await fetch(`${BACKEND_URL}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
-          message: recognizedText,
-          includeMemory: false, // Disabled for speed
-          userId: 'default'
+          messages: [{ role: 'user', content: recognizedText }],
+          useContext: true,
+          includeMemory: false
         })
       });
 
       if (!fetchResponse.ok) {
-        throw new Error('Failed to get streaming response from backend');
+        throw new Error('Failed to get response from backend');
       }
 
-      const reader = fetchResponse.body?.getReader();
-      const decoder = new TextDecoder();
-      let fullResponse = '';
-      let sentenceQueue: string[] = [];
-      let isSpeakingChunk = false;
+      const data = await fetchResponse.json();
+      const fullResponse = data.content || '';
+      setResponse(fullResponse);
 
-      // Process streaming chunks
-      while (reader) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-
-              if (data.type === 'chunk' && data.content) {
-                const sentence = data.content.trim();
-                fullResponse += sentence + ' ';
-                setResponse(fullResponse.trim());
-
-                // Add to sentence queue for voice playback
-                if (!isMuted) {
-                  sentenceQueue.push(sentence);
-                  
-                  // Start speaking if not already speaking
-                  if (!isSpeakingChunk && sentenceQueue.length > 0) {
-                    isSpeakingChunk = true;
-                    speakNextSentence();
-                  }
-                }
-              } else if (data.type === 'done') {
-                fullResponse = data.fullResponse || fullResponse;
-                setResponse(fullResponse.trim());
-              } else if (data.type === 'error') {
-                throw new Error(data.message);
-              }
-            } catch (e) {
-              console.warn('Stream parse error:', e);
-            }
-          }
-        }
+      // Speak the response
+      if (!isMuted && fullResponse) {
+        speak(fullResponse);
       }
 
-      // Helper to speak sentences from queue
-      async function speakNextSentence() {
-        while (sentenceQueue.length > 0) {
-          const sentence = sentenceQueue.shift();
-          if (sentence) {
-            // Speak immediately (non-blocking)
-            speak(sentence);
-            // Wait for this sentence to finish before next
-            await new Promise(resolve => setTimeout(resolve, sentence.length * 50 + 500));
-          }
-        }
-        isSpeakingChunk = false;
-      }
-
-      // Wait a bit for final speech to complete, then restart listening
+      // Restart listening after speech
       setTimeout(() => {
         setIsProcessing(false);
         if (isVoiceCallActive) {
@@ -158,15 +111,18 @@ export function useVoiceCall(): UseVoiceCallReturn {
     } catch (error) {
       console.error('Voice call error:', error);
       
-      // Fallback to non-streaming
+      // Fallback retry
       try {
         const fallbackResponse = await fetch(`${BACKEND_URL}/api/chat`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
           body: JSON.stringify({
-            message: recognizedText,
-            includeMemory: false,
-            userId: 'default'
+            messages: [{ role: 'user', content: recognizedText }],
+            useContext: true,
+            includeMemory: false
           })
         });
 

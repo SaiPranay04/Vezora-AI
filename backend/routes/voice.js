@@ -4,6 +4,7 @@
 
 import express from 'express';
 import { textToSpeech, getAvailableVoices } from '../controllers/voiceController.js';
+import { cleanTextForTTS } from '../utils/textCleaner.js';
 
 const router = express.Router();
 
@@ -25,7 +26,11 @@ router.post('/speak', async (req, res) => {
       return res.status(400).json({ error: 'Text is required' });
     }
 
-    const audioData = await textToSpeech(text, {
+    // Clean text: Remove markdown and make voice-friendly
+    const cleanText = cleanTextForTTS(text);
+    console.log('🎤 [TTS] Original length:', text.length, '| Clean length:', cleanText.length);
+
+    const audioData = await textToSpeech(cleanText, {
       voice,
       speed,
       pitch,
@@ -74,11 +79,15 @@ router.post('/stream', async (req, res) => {
       return res.status(400).json({ error: 'Text is required' });
     }
 
+    // Clean text: Remove markdown and make voice-friendly
+    const cleanText = cleanTextForTTS(text);
+    console.log('🎤 [TTS Stream] Cleaned text for voice');
+
     // Set headers for audio streaming
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Transfer-Encoding', 'chunked');
 
-    const audioStream = await textToSpeech(text, { stream: true });
+    const audioStream = await textToSpeech(cleanText, { stream: true });
     audioStream.pipe(res);
   } catch (error) {
     console.error('❌ Voice stream error:', error);

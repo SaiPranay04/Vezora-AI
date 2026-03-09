@@ -1,0 +1,47 @@
+========================================
+GROQ INTEGRATION - ADD TO YOUR .env FILE
+========================================
+
+Get your free API key from: https://console.groq.com/keys
+
+Then add these 2 lines to your backend/.env file:
+
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=llama-3.1-70b-versatile
+
+========================================
+RECOMMENDED MODELS
+========================================
+
+PRIMARY MODEL (use this for everything):
+✅ llama-3.1-70b-versatile
+   - Best quality
+   - 128K context window
+   - Perfect for chat, voice, memory, tools
+   - 50+ tokens/sec
+
+ALTERNATIVE MODELS:
+- llama-3.1-8b-instant     (Fastest, 250+ tokens/sec)
+- mixtral-8x7b-32768       (Great for tool calling)
+- gemma-2-9b-it            (Fast and efficient)
+
+========================================
+FREE TIER LIMITS
+========================================
+
+Daily:   14,400 requests/day
+Minute:  60 requests/minute
+
+This is MORE than enough for daily usage!
+
+========================================
+PRIORITY SYSTEM
+========================================
+
+Your Vezora AI will now use models in this order:
+
+1. GROQ (llama-3.1-70b) → PRIMARY
+2. Gemini (if Groq fails) → FALLBACK 1
+3. Ollama (if both fail)  → FALLBACK 2
+
+========================================

@@ -5,6 +5,7 @@
 import GoogleTTS from '@google-cloud/text-to-speech';
 import fs from 'fs';
 import util from 'util';
+import { cleanTextForTTS } from '../utils/textCleaner.js';
 
 const GOOGLE_TTS_API_KEY = process.env.GOOGLE_TTS_API_KEY;
 const USE_GOOGLE_TTS = !!GOOGLE_TTS_API_KEY;
@@ -35,15 +36,19 @@ export async function textToSpeech(text, options = {}) {
     stream = false
   } = options;
 
+  // Clean text for voice (remove markdown, symbols, etc.)
+  // This is a safety layer in case cleaning wasn't done upstream
+  const cleanText = cleanTextForTTS(text);
+
   if (USE_GOOGLE_TTS && ttsClient) {
-    return await googleTTS(text, { voice, speed, pitch, language, stream });
+    return await googleTTS(cleanText, { voice, speed, pitch, language, stream });
   } else {
     // Fallback: Return instruction for browser TTS
     return {
       audio: null,
       format: 'browser-tts',
-      text: text,
-      duration: estimateDuration(text, speed),
+      text: cleanText,
+      duration: estimateDuration(cleanText, speed),
       message: 'Use browser Web Speech API for TTS'
     };
   }

@@ -4,17 +4,24 @@ import { NavRail, type View } from './components/NavRail';
 import { ChatPage } from './pages/ChatPage';
 import { MemoryPage } from './pages/MemoryPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { ProfilePage } from './pages/ProfilePage';
+import { TaskManagerPage } from './pages/TaskManagerPage';
 import { LaunchSplash } from './components/LaunchSplash';
 import { MiniMode } from './components/MiniMode';
-import { VoiceCallMode } from './components/VoiceCallMode';
+import { VoiceCallWidget } from './components/VoiceCallWidget';
 import { useVoiceCall } from './hooks/useVoiceCall';
-import { Minimize2, Phone } from 'lucide-react';
+import { useAuth } from './contexts/AuthContext';
+import { LoginPage } from './pages/LoginPage';
+import { RegisterPage } from './pages/RegisterPage';
+import { Minimize2, Phone, Loader2 } from 'lucide-react';
 import './index.css';
 
 function App() {
+  const { isAuthenticated, isLoading } = useAuth();
   const [currentView, setCurrentView] = useState<View>('chat');
   const [showSplash, setShowSplash] = useState(true);
   const [isMiniMode, setIsMiniMode] = useState(false);
+  const [showRegister, setShowRegister] = useState(false);
   
   // Voice Call Mode
   const {
@@ -38,10 +45,31 @@ function App() {
     return () => clearTimeout(timer);
   }, []);
 
+  // Show auth pages if not authenticated
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <Loader2 className="animate-spin text-primary" size={48} />
+        <p className="ml-4 text-xl text-text/70">Loading...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return showRegister ? (
+      <RegisterPage onSwitchToLogin={() => setShowRegister(false)} />
+    ) : (
+      <LoginPage onSwitchToRegister={() => setShowRegister(true)} />
+    );
+  }
+
+
   const renderView = () => {
     const views = {
       'chat': <ChatPage />,
       'memory': <MemoryPage />,
+      'profile': <ProfilePage />,
+      'tasks': <TaskManagerPage />,
       'settings': <SettingsPage />,
       'apps': <ChatPage /> // Placeholder for apps view
     };
@@ -65,16 +93,16 @@ function App() {
       {/* Launch Splash Screen */}
       <LaunchSplash isVisible={showSplash} />
 
-      {/* Voice Call Mode */}
-      <VoiceCallMode
-        isOpen={isVoiceCallActive}
+      {/* Voice Call Widget (Floating) */}
+      <VoiceCallWidget
+        isActive={isVoiceCallActive}
         onClose={endVoiceCall}
         isListening={isListening}
         isSpeaking={isSpeaking}
         transcript={transcript}
         response={response}
-        onToggleListen={toggleListen}
-        onToggleMute={toggleMute}
+        toggleListen={toggleListen}
+        toggleMute={toggleMute}
         isMuted={isMuted}
       />
 
@@ -86,15 +114,9 @@ function App() {
       </AnimatePresence>
 
       {/* Main App */}
-      <AnimatePresence>
-        {!isMiniMode && (
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.3 }}
-            className="flex h-screen bg-background text-text overflow-hidden selection:bg-purple-500/30 font-sans"
-          >
+      {!showSplash && !isMiniMode && (
+        <div className="flex h-full w-full bg-background text-text overflow-hidden selection:bg-purple-500/30 font-sans"
+        >
 
             {/* Background Gradients (Global) */}
             <motion.div 
@@ -127,7 +149,7 @@ function App() {
             <NavRail currentView={currentView} onViewChange={setCurrentView} />
 
             {/* Main Content Area */}
-            <main className="flex-1 relative z-10 flex flex-col h-screen overflow-hidden">
+            <main className="flex-1 relative z-10 flex flex-col h-full overflow-hidden">
 
               {/* Top Bar (Context Awareness) */}
               <motion.header 
@@ -205,7 +227,7 @@ function App() {
               </motion.header>
 
               {/* View Container with Animated Transitions */}
-              <div className="flex-1 relative overflow-hidden">
+              <div className="flex-1 relative overflow-hidden view-container">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={currentView}
@@ -214,7 +236,7 @@ function App() {
                     exit="exit"
                     variants={pageVariants}
                     transition={pageTransition}
-                    className="absolute inset-0"
+                    className="absolute inset-0 overflow-hidden"
                   >
                     {renderView()}
                   </motion.div>
@@ -222,9 +244,8 @@ function App() {
               </div>
 
             </main>
-          </motion.div>
-        )}
-      </AnimatePresence>
+        </div>
+      )}
     </>
   );
 }

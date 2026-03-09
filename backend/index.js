@@ -5,6 +5,7 @@
 
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { WebSocketServer } from 'ws';
 import http from 'http';
@@ -40,13 +41,29 @@ import searchRoutes from './routes/search.js';
 import workflowsRoutes from './routes/workflows.js';
 import ocrRoutes from './routes/ocr.js';
 
+// NEW: Context-aware memory and task routes
+import structuredMemoryRoutes from './routes/structuredMemory.js';
+import tasksRoutes from './routes/tasks.js';
+import coordinatorRoutes from './routes/coordinator.js';
+import profileRoutes from './routes/profile.js';
+
 // Import utilities
 import { initializeDatabase } from './utils/database.js';
 import { ensureDataDirectories } from './utils/fileSystem.js';
-import { initializeGemini, isGeminiAvailable } from './utils/geminiClient.js';
+// import { initializeGemini, isGeminiAvailable } from './utils/geminiClient.js'; // DISABLED - Using Groq only
 import { isOllamaHealthy } from './utils/ollamaClient.js';
+import { isGroqAvailable } from './utils/groqClient.js';
 import { initializeWorkflowEngine } from './services/workflowEngine.js';
 import { testEncryption } from './utils/encryption.js';
+
+// NEW: PostgreSQL database initialization
+import { initializePool, testConnection } from './config/database.js';
+
+// NEW: Authentication routes
+import authRoutesNew from './routes/authRoutes.js';
+
+// NEW: Rate limiters
+import { apiLimiter } from './middleware/rateLimiter.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -76,10 +93,29 @@ wss.on('connection', (ws) => {
 });
 
 // Middleware
+
+// Security headers with Helmet
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // Needed for Vite dev
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "http://localhost:5000", "ws://localhost:5000"],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // Allows embedding resources
+}));
+
+// CORS
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true
 }));
+
+// Rate limiting for API routes
+app.use('/api', apiLimiter);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
@@ -96,7 +132,7 @@ app.use((req, res, next) => {
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
-  const geminiAvailable = isGeminiAvailable();
+  // const geminiAvailable = isGeminiAvailable(); // Gemini disabled
   const ollamaHealthy = await isOllamaHealthy();
   
   res.json({
@@ -104,11 +140,9 @@ app.get('/health', async (req, res) => {
     timestamp: new Date().toISOString(),
     version: '1.0.0',
     aiProviders: {
-      gemini: geminiAvailable ? 'available' : 'not configured',
+      groq: isGroqAvailable() ? 'available' : 'not configured',
       ollama: ollamaHealthy ? 'connected' : 'disconnected',
-      active: process.env.AI_PROVIDER === 'ollama' ? 'ollama' : 
-              (geminiAvailable ? 'gemini' : 
-              (ollamaHealthy ? 'ollama' : 'none'))
+      active: 'groq'
     },
     features: {
       voiceCallMode: process.env.VOICE_CALL_MODE === 'true',
@@ -127,13 +161,21 @@ app.use('/api/files', filesRoutes);
 app.use('/api/apps', appsRoutes);
 app.use('/api/logs', logsRoutes);
 
-// New integrated routes
-app.use('/api/auth', authRoutes);
+// NEW: Multi-user authentication routes
+app.use('/api/auth', authRoutesNew);
+
+// Google OAuth routes
 app.use('/api/gmail', gmailRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/workflows', workflowsRoutes);
 app.use('/api/ocr', ocrRoutes);
+
+// NEW: Context-aware memory and task management
+app.use('/api/structured-memory', structuredMemoryRoutes);
+app.use('/api/tasks', tasksRoutes);
+app.use('/api/coordinator', coordinatorRoutes);
+app.use('/api/profile', profileRoutes);
 
 // Mount auth callback at root level for Google OAuth (matches redirect URI)
 app.use('/auth', authRoutes);
@@ -168,8 +210,19 @@ async function startServer() {
     // Ensure data directories exist
     await ensureDataDirectories();
     
-    // Initialize database (SQLite)
+    // Initialize database (SQLite for legacy features)
     await initializeDatabase();
+    
+    // NEW: Initialize PostgreSQL for multi-user features
+    console.log('🔌 Connecting to PostgreSQL...');
+    initializePool();
+    const dbConnected = await testConnection();
+    if (dbConnected) {
+      console.log('✅ PostgreSQL connected successfully');
+    } else {
+      console.warn('⚠️  WARNING: PostgreSQL connection failed! Multi-user features will not work.');
+      console.warn('   Set DATABASE_URL in .env to enable multi-user authentication.');
+    }
     
     // Test encryption
     console.log('🔐 Testing encryption...');
@@ -191,16 +244,12 @@ async function startServer() {
       console.log('');
       
       // Initialize and check AI providers
-      initializeGemini(); // Initialize Gemini before checking availability
-      const geminiAvailable = isGeminiAvailable();
+      // initializeGemini(); // DISABLED - Using Groq only
+      // const geminiAvailable = isGeminiAvailable();
       const ollamaHealthy = await isOllamaHealthy();
       
       console.log('🤖 AI Providers:');
-      if (geminiAvailable) {
-        console.log(`   ✅ Gemini: ACTIVE (${process.env.GEMINI_MODEL || 'gemini-pro'})`);
-      } else {
-        console.log(`   ⚪ Gemini: Not configured`);
-      }
+      console.log(`   ✅ Groq: ACTIVE (${process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'})`);
       
       if (ollamaHealthy) {
         console.log(`   ✅ Ollama: ACTIVE (${process.env.OLLAMA_MODEL_NAME || 'phi'})`);
@@ -209,9 +258,7 @@ async function startServer() {
       }
       
       // Show active provider
-      const activeProvider = process.env.AI_PROVIDER === 'ollama' ? 'Ollama' : 
-                            (geminiAvailable ? 'Gemini' : 
-                            (ollamaHealthy ? 'Ollama' : 'None'));
+      const activeProvider = 'Groq';
       console.log(`   🎯 Primary: ${activeProvider}`);
       console.log('');
       

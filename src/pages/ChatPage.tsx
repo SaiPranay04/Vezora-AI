@@ -5,10 +5,12 @@ import { AppShortcuts } from '../components/AppShortcuts';
 import { ChatSidebar } from '../components/ChatSidebar';
 import { useVoice } from '../hooks/useVoice';
 import { useChats } from '../hooks/useChats';
+import { useAuth } from '../contexts/AuthContext';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 export const ChatPage = () => {
+    const { token } = useAuth();
     const { isListening, isSpeaking, transcript, startListening, stopListening, speak, setTranscript } = useVoice();
     
     // Use chat sessions hook
@@ -65,11 +67,13 @@ export const ChatPage = () => {
 
             const response = await fetch(`${BACKEND_URL}/api/chat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify({
                     messages: conversationHistory, // Send full conversation history
-                    includeMemory: false, // Disabled for speed (conversation context is enough)
-                    userId: 'default'
+                    includeMemory: false // Disabled for speed (conversation context is enough)
                 })
             });
 

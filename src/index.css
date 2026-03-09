@@ -5,8 +5,32 @@
 @tailwind utilities;
 
 @layer base {
+  *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  html {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   body {
-    @apply bg-background text-text font-sans antialiased overflow-hidden h-screen w-screen selection:bg-primary/30;
+    @apply bg-background text-text font-sans antialiased selection:bg-primary/30;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
   }
 }
 

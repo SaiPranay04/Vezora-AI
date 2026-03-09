@@ -12,7 +12,7 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
  */
 export async function isOllamaHealthy() {
   try {
-    const response = await axios.get(`${OLLAMA_BASE_URL}/api/tags`, { timeout: 3000 });
+    const response = await axios.get(`${OLLAMA_BASE_URL}/api/tags`, { timeout: 5000 });
     return response.status === 200;
   } catch (error) {
     console.error('❌ Ollama health check failed:', error.message);
@@ -50,7 +50,7 @@ export async function generateChatCompletion(messages, options = {}) {
         }
       },
       {
-        timeout: 30000, // Reduced to 30s for faster failures
+        timeout: 120000, // Increased to 120s for complex queries
         responseType: stream ? 'stream' : 'json'
       }
     );

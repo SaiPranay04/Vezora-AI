@@ -19,14 +19,22 @@ interface ChatBoxProps {
 }
 
 export const ChatBox = ({ messages, isTyping, onReplayMessage }: ChatBoxProps) => {
+    const containerRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
 
+    // Scroll only the chat container — NOT the whole page
     useEffect(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        const container = containerRef.current;
+        if (container) {
+            container.scrollTo({
+                top: container.scrollHeight,
+                behavior: 'smooth'
+            });
+        }
     }, [messages, isTyping]);
 
     return (
-        <div className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-primary/20 scrollbar-track-transparent flex flex-col">
+        <div ref={containerRef} className="flex-1 overflow-y-auto p-6 scrollbar-thin scrollbar-thumb-primary/20 scrollbar-track-transparent flex flex-col overscroll-none">
             <div className="mt-auto space-y-6 w-full">
                 {messages.map((msg) => (
                     <motion.div

@@ -1,0 +1,39 @@
+========================================
+⚠️ URGENT: UPDATE YOUR .env FILE NOW!
+========================================
+
+Open your backend/.env file and change these 2 lines:
+
+❌ OLD (BROKEN):
+GROQ_MODEL=llama-3.1-70b-versatile
+
+✅ NEW (WORKING):
+GROQ_MODEL=llama-3.3-70b-versatile
+
+========================================
+WHY THIS IS NEEDED
+========================================
+
+Groq decommissioned the old model on their servers.
+Your .env file still has the old model name.
+
+The code has been updated, but it reads from .env first!
+
+========================================
+AFTER YOU UPDATE .env
+========================================
+
+1. Save the .env file
+2. Restart the backend (it's already running)
+3. Test again
+
+========================================
+ALSO CHECK THIS (OPTIONAL)
+========================================
+
+If you have GEMINI_MODEL in your .env, update it too:
+
+❌ OLD: GEMINI_MODEL=gemini-pro
+✅ NEW: GEMINI_MODEL=gemini-1.5-pro
+
+========================================

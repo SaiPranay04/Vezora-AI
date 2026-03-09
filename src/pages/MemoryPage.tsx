@@ -1,8 +1,77 @@
 import { Brain, Search, Trash2, Edit2, Plus, Shield, Clock, Zap } from 'lucide-react';
-import memoryData from '../../memory.json';
 import { motion } from 'framer-motion';
+import { useState, useEffect } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+
+interface Memory {
+    id?: string;
+    type?: string;
+    preference?: string;
+    category?: string;
+    confidence?: number;
+    timestamp?: string;
+}
 
 export const MemoryPage = () => {
+    const { token } = useAuth();
+    const [memories, setMemories] = useState<Memory[]>([]);
+    const [recentTopics, setRecentTopics] = useState<string[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
+
+    useEffect(() => {
+        fetchMemories();
+    }, []);
+
+    const fetchMemories = async () => {
+        if (!token) return;
+        
+        try {
+            // Fetch from backend structured memory
+            const response = await fetch('http://localhost:5000/api/structured-memory?type=USER_PREFERENCE', {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                },
+            });
+            const data = await response.json();
+            
+            if (data.success) {
+                setMemories(data.memories || []);
+            } else {
+                // Fallback to default data
+                setMemories([
+                    { preference: 'No memories yet - start chatting with Vezora!', confidence: 0 }
+                ]);
+            }
+
+            // Fetch profile for interests/topics
+            const profileResponse = await fetch('http://localhost:5000/api/profile', {
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                },
+            });
+            const profileData = await profileResponse.json();
+            if (profileData.success && profileData.profile.interests) {
+                setRecentTopics(profileData.profile.interests);
+            }
+        } catch (error) {
+            console.error('Failed to fetch memories:', error);
+            setMemories([{ preference: 'Unable to load memories', confidence: 0 }]);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    if (isLoading) {
+        return (
+            <div className="flex-1 h-full flex items-center justify-center">
+                <div className="text-center">
+                    <div className="w-16 h-16 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                    <p className="text-text/60">Loading memories...</p>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="flex-1 h-full overflow-y-auto p-8 lg:p-12">
             <header className="mb-10 flex items-center justify-between">
@@ -34,10 +103,11 @@ export const MemoryPage = () => {
                         <Brain size={16} /> Core Facts
                     </h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {memoryData.user_facts.map((fact, i) => {
-                            // Assign random confidence levels for demo
-                            const confidenceLevels = ['High', 'Medium', 'Low'] as const;
-                            const confidence = confidenceLevels[i % 3];
+                        {memories.map((memory, i) => {
+                            const fact = memory.preference || memory.category || 'No data';
+                            // Use actual confidence from backend
+                            const confidenceValue = memory.confidence || 0;
+                            const confidence = confidenceValue > 0.7 ? 'High' : confidenceValue > 0.4 ? 'Medium' : 'Low';
                             const confidenceColors: Record<typeof confidenceLevels[number], string> = {
                                 'High': 'bg-green-500/10 text-green-400 border-green-500/20',
                                 'Medium': 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
@@ -64,11 +134,11 @@ export const MemoryPage = () => {
                                     <div className="flex items-center justify-between text-[10px] text-text/40 mt-3 pt-3 border-t border-white/5">
                                         <span className="flex items-center gap-1">
                                             <Clock size={10} />
-                                            {Math.floor(Math.random() * 30) + 1}d ago
+                                            {memory.timestamp ? new Date(memory.timestamp).toLocaleDateString() : 'Recently'}
                                         </span>
                                         <span className="flex items-center gap-1">
                                             <Zap size={10} />
-                                            Used {Math.floor(Math.random() * 20) + 5}x
+                                            {memory.type || 'Preference'}
                                         </span>
                                     </div>
                                     
@@ -107,7 +177,7 @@ export const MemoryPage = () => {
                         className="bg-gradient-to-br from-[#1A1A1A] to-[#151515] border border-white/5 rounded-2xl p-6 overflow-x-auto"
                     >
                         <div className="flex gap-8 min-w-full">
-                            {memoryData.recent_topics.map((topic, i) => (
+                            {recentTopics.length > 0 ? recentTopics.map((topic, i) => (
                                 <motion.div 
                                     key={i}
                                     initial={{ opacity: 0, scale: 0.8 }}
@@ -137,11 +207,13 @@ export const MemoryPage = () => {
                                         {Math.floor(Math.random() * 50) + 10} refs
                                     </div>
                                     {/* Line connector */}
-                                    {i !== memoryData.recent_topics.length - 1 && (
+                                    {i !== recentTopics.length - 1 && (
                                         <div className="absolute top-[5px] left-[15px] right-[-20px] h-[1px] bg-gradient-to-r from-primary/50 to-primary/10 -z-10" />
                                     )}
                                 </motion.div>
-                            ))}
+                            )) : (
+                                <p className="text-text/50 text-sm">No topics yet - start chatting to build your context!</p>
+                            )}
                         </div>
                     </motion.div>
                 </div>

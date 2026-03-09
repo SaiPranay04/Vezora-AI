@@ -5,12 +5,17 @@
 import express from 'express';
 import axios from 'axios';
 import { generateChatCompletion, parseIntent, isOllamaHealthy } from '../utils/ollamaClient.js';
+import { generateGroqCompletion, isGroqAvailable } from '../utils/groqClient.js';
 import { generateGeminiCompletion, parseIntentWithGemini, isGeminiAvailable } from '../utils/geminiClient.js';
 import { getMemory } from '../controllers/memoryController.js';
 import { addLog } from '../controllers/logsController.js';
 import { getSettings } from '../controllers/settingsController.js';
 import { executeAgent } from '../utils/langchainAgent.js';
 import { isAuthenticated } from '../utils/googleAuth.js';
+import { processWithContext } from '../services/coordinatorService.js';
+import { cleanTextForTTS } from '../utils/textCleaner.js';
+import { addTask } from '../services/taskService.js';
+import { optionalAuth } from '../middleware/auth.js';
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 
@@ -56,9 +61,17 @@ const router = express.Router();
  * POST /api/chat
  * Main chat endpoint - receives message, returns AI response
  */
-router.post('/', async (req, res) => {
+router.post('/', optionalAuth, async (req, res) => {
   try {
-    const { message, messages: conversationHistory, includeMemory = false, userId = 'default' } = req.body;
+    const { 
+      message, 
+      messages: conversationHistory, 
+      includeMemory = false, 
+      useContext = true // NEW: Enable context-aware responses by default
+    } = req.body;
+
+    // Get userId from authenticated user
+    const userId = req.userId || req.body.userId;
 
     // Support both formats:
     // 1. NEW: messages array (with conversation history)
@@ -93,8 +106,13 @@ router.post('/', async (req, res) => {
     const settings = await getSettings(userId);
     const voiceCallMode = process.env.VOICE_CALL_MODE === 'true' && settings.voiceCallEnabled;
 
-    // Check if this is a tool-related query (Gmail, Calendar, etc.)
+    // Get last user message
     const lastUserMessage = (message || messages[messages.length - 1]?.content || '').toLowerCase();
+    
+    // ==================== REMOVED: Regex-based task detection ====================
+    // Now handled intelligently by coordinator with Groq
+
+    // Check if this is a tool-related query (Gmail, Calendar, etc.)
     const isToolQuery = 
       lastUserMessage.includes('email') || 
       lastUserMessage.includes('gmail') || 
@@ -151,6 +169,53 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // ==================== NEW: CONTEXT-AWARE MODE ====================
+    // Use coordinator for intelligent context retrieval and memory updates
+    if (useContext && !isToolQuery) {
+      console.log('🧠 Using context-aware mode with coordinator');
+      
+      try {
+        // Determine AI provider: Groq > Gemini > Ollama
+        let aiProvider = 'groq';  // Default to Groq (primary)
+        if (!isGroqAvailable()) {
+          aiProvider = useOllama ? 'ollama' : 'gemini';
+        }
+        
+        const coordinatorResult = await processWithContext(lastUserMessage, {
+          userId,
+          conversationHistory: conversationHistory || [],
+          useContext: true,
+          aiProvider
+        });
+
+        const responseTime = 0; // Calculated internally by coordinator
+        
+        return res.json({
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: coordinatorResult.response,
+          timestamp: new Date().toISOString(),
+          model: isGroqAvailable() 
+            ? process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'
+            : useOllama ? 'mistral' : 'gemini',
+          provider: isGroqAvailable() ? 'groq' : (useOllama ? 'ollama' : 'gemini'),
+          intent: { action: 'chat', category: 'general' },
+          responseTime,
+          contextUsed: coordinatorResult.contextUsed,
+          contextSummary: {
+            projects: coordinatorResult.context.projects?.length || 0,
+            decisions: coordinatorResult.context.decisions?.length || 0,
+            tasks: coordinatorResult.context.tasks?.length || 0,
+            preferences: coordinatorResult.context.preferences?.length || 0
+          }
+        });
+      } catch (coordinatorError) {
+        console.error('❌ Coordinator error:', coordinatorError);
+        console.log('⚠️ Falling back to standard chat mode');
+        // Fall through to standard mode
+      }
+    }
+
     // Optionally add memory context (usually disabled for speed when using conversation history)
     if (includeMemory) {
       const memory = await getMemory(userId);
@@ -169,42 +234,71 @@ router.post('/', async (req, res) => {
     let usedProvider;
 
     try {
-      if (useGemini && process.env.AI_PROVIDER !== 'ollama') {
-        // Try Gemini first
+      // PRIMARY: Try Groq first (fastest and best for voice)
+      if (isGroqAvailable()) {
+        console.log('🤖 Using Groq AI');
+        
+        // Convert messages to prompt format
+        const systemPrompt = messages[0]?.role === 'system' ? messages[0].content : 'You are Vezora AI, a helpful and intelligent assistant.';
+        const userMessages = messages.filter(m => m.role !== 'system');
+        const prompt = userMessages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
+        
+        const groqResponse = await generateGroqCompletion(
+          prompt,
+          systemPrompt,
+          isVoice ? 200 : 2048,  // Shorter for voice, longer for chat
+          0.7
+        );
+        
+        aiResponse = { response: groqResponse };
+        usedProvider = 'groq';
+      }
+      // FALLBACK 1: Gemini
+      else if (useGemini || isGeminiAvailable()) {
         console.log('🤖 Using Gemini AI');
         aiResponse = await generateGeminiCompletion(messages, {
           temperature: settings.temperature || 0.7,
           maxTokens: settings.maxTokens || 1024
         });
         usedProvider = 'gemini';
-      } else {
-        // Use Ollama (OPTIMIZED FOR VOICE)
+      }
+      // FALLBACK 2: Ollama
+      else {
         console.log('🤖 Using Ollama');
         aiResponse = await generateChatCompletion(messages, {
-          temperature: 0.6,        // Optimized for speed
-          maxTokens: 100,          // Voice-friendly length
-          tone: settings.voiceTone || 'friendly'  // Personality preset
+          temperature: 0.6,
+          maxTokens: 100,
+          tone: settings.voiceTone || 'friendly'
         });
         usedProvider = 'ollama';
       }
     } catch (error) {
-      // Fallback to other provider if primary fails
+      // CASCADE FALLBACK
       console.error(`❌ ${usedProvider} failed, trying fallback...`);
       
-      if (usedProvider === 'gemini' && await isOllamaHealthy()) {
-        aiResponse = await generateChatCompletion(messages, {
-          temperature: settings.temperature || 0.7,
-          maxTokens: settings.maxTokens || 512
-        });
-        usedProvider = 'ollama (fallback)';
-      } else if (usedProvider === 'ollama' && isGeminiAvailable()) {
-        aiResponse = await generateGeminiCompletion(messages, {
-          temperature: settings.temperature || 0.7,
-          maxTokens: settings.maxTokens || 1024
-        });
-        usedProvider = 'gemini (fallback)';
-      } else {
-        throw error; // No fallback available
+      try {
+        // Try Gemini fallback
+        if (isGeminiAvailable() && usedProvider !== 'gemini') {
+          console.log('🔄 Falling back to Gemini');
+          aiResponse = await generateGeminiCompletion(messages, {
+            temperature: settings.temperature || 0.7,
+            maxTokens: settings.maxTokens || 1024
+          });
+          usedProvider = 'gemini (fallback)';
+        }
+        // Try Ollama fallback
+        else if (await isOllamaHealthy() && usedProvider !== 'ollama') {
+          console.log('🔄 Falling back to Ollama');
+          aiResponse = await generateChatCompletion(messages, {
+            temperature: settings.temperature || 0.7,
+            maxTokens: settings.maxTokens || 512
+          });
+          usedProvider = 'ollama (fallback)';
+        } else {
+          throw error;
+        }
+      } catch (fallbackError) {
+        throw new Error('All AI providers are currently unavailable');
       }
     }
 
@@ -236,7 +330,9 @@ router.post('/', async (req, res) => {
       role: 'assistant',
       content: aiResponse.response,
       timestamp: new Date().toISOString(),
-      model: aiResponse.model,
+      model: usedProvider === 'groq' || usedProvider === 'groq (fallback)' 
+        ? process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'
+        : aiResponse.model || usedProvider,
       provider: usedProvider,
       intent,
       responseTime,
@@ -246,7 +342,8 @@ router.post('/', async (req, res) => {
     // Add voice data if voice call mode is enabled
     if (voiceCallMode) {
       responseData.voiceEnabled = true;
-      responseData.voiceText = aiResponse.response;
+      // Clean markdown formatting for voice output
+      responseData.voiceText = cleanTextForTTS(aiResponse.response);
       // Frontend will call /api/voice/speak to get audio
     }
 

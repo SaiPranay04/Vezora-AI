@@ -1,0 +1,41 @@
+========================================
+⚠️ IMPORTANT: GROQ MODEL UPDATE
+========================================
+
+The model "llama-3.1-70b-versatile" has been DECOMMISSIONED by Groq.
+
+✅ NEW MODEL TO USE:
+GROQ_MODEL=llama-3.3-70b-versatile
+
+========================================
+UPDATE YOUR .env FILE
+========================================
+
+Change this line in your backend/.env:
+
+OLD: GROQ_MODEL=llama-3.1-70b-versatile
+NEW: GROQ_MODEL=llama-3.3-70b-versatile
+
+========================================
+CURRENT AVAILABLE GROQ MODELS (2026)
+========================================
+
+✅ RECOMMENDED (Best Quality):
+- llama-3.3-70b-versatile  (BEST - 128K context, replaces 3.1)
+- llama-3.1-8b-instant     (Fastest - 128K context)
+
+✅ ALTERNATIVE MODELS:
+- mixtral-8x7b-32768       (Great for tool calling)
+- gemma2-9b-it            (Fast and efficient)
+- llama-3.2-90b-vision-preview (Vision support)
+
+========================================
+GEMINI MODEL FIX
+========================================
+
+Also updated Gemini fallback model:
+
+OLD: gemini-pro
+NEW: gemini-1.5-pro
+
+========================================

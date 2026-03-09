@@ -6,6 +6,7 @@
 import { DynamicStructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
 import { getGmailClient, getCalendarClient, isAuthenticated } from './googleAuth.js';
+import { generateGroqCompletion, isGroqAvailable } from './groqClient.js';
 import { generateGeminiCompletion, isGeminiAvailable } from './geminiClient.js';
 import { launchApplication } from '../controllers/appsController.js';
 import { openFile, saveFile } from '../controllers/filesController.js';
@@ -15,21 +16,64 @@ const OLLAMA_MODEL = process.env.OLLAMA_MODEL_NAME || 'mistral:latest';
 
 /**
  * Create LangChain-compatible LLM
+ * Priority: Groq > Gemini > Ollama
  */
 function createLLM() {
-  // Simple wrapper that uses our existing AI clients
   return {
     invoke: async (messages) => {
-      const useGemini = process.env.AI_PROVIDER === 'gemini' && isGeminiAvailable();
-      
-      if (useGemini) {
-        const response = await generateGeminiCompletion(messages);
-        return { content: response };
-      } else {
-        // Use Ollama via our client
+      try {
+        // PRIMARY: Try Groq first
+        if (isGroqAvailable()) {
+          console.log('🤖 [LANGCHAIN] Using Groq');
+          
+          // Convert messages to prompt format
+          const systemPrompt = 'You are Vezora AI, a helpful assistant with access to tools for Gmail, Calendar, Search, Files, and Apps.';
+          const userMessages = Array.isArray(messages) ? messages : [messages];
+          const prompt = userMessages.map(m => {
+            if (typeof m === 'string') return m;
+            return `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`;
+          }).join('\n\n');
+          
+          const response = await generateGroqCompletion(
+            prompt,
+            systemPrompt,
+            1024,  // maxTokens
+            0.7    // temperature
+          );
+          return { content: response };
+        }
+        
+        // FALLBACK 1: Gemini
+        if (isGeminiAvailable()) {
+          console.log('🤖 [LANGCHAIN] Using Gemini');
+          const response = await generateGeminiCompletion(messages);
+          return { content: response };
+        }
+        
+        // FALLBACK 2: Ollama
+        console.log('🤖 [LANGCHAIN] Using Ollama');
         const { generateChatCompletion } = await import('./ollamaClient.js');
         const response = await generateChatCompletion(messages);
         return { content: response.response };
+        
+      } catch (error) {
+        console.error('❌ [LANGCHAIN] LLM error:', error.message);
+        
+        // Try fallback if primary fails
+        try {
+          if (isGeminiAvailable()) {
+            console.log('🔄 [LANGCHAIN] Falling back to Gemini');
+            const response = await generateGeminiCompletion(messages);
+            return { content: response };
+          } else {
+            console.log('🔄 [LANGCHAIN] Falling back to Ollama');
+            const { generateChatCompletion } = await import('./ollamaClient.js');
+            const response = await generateChatCompletion(messages);
+            return { content: response.response };
+          }
+        } catch (fallbackError) {
+          throw new Error('All AI providers failed in LangChain agent');
+        }
       }
     }
   };
