@@ -83,7 +83,7 @@ const TONE_PRESETS = {
 /**
  * Format conversation messages for Ollama prompt (VOICE-OPTIMIZED)
  */
-function formatMessagesForOllama(messages, tone = 'friendly') {
+export function formatMessagesForOllama(messages, tone = 'friendly') {
   // STRICT voice-friendly system prompt
   const systemPrompt = `You are Vezora, a real-time voice assistant.
 

@@ -4,7 +4,7 @@
 
 import express from 'express';
 import axios from 'axios';
-import { generateChatCompletion, parseIntent, isOllamaHealthy } from '../utils/ollamaClient.js';
+import { generateChatCompletion, parseIntent, isOllamaHealthy, formatMessagesForOllama } from '../utils/ollamaClient.js';
 import { generateGroqCompletion, isGroqAvailable } from '../utils/groqClient.js';
 import { generateGeminiCompletion, parseIntentWithGemini, isGeminiAvailable } from '../utils/geminiClient.js';
 import { getMemory } from '../controllers/memoryController.js';
@@ -19,41 +19,7 @@ import { optionalAuth } from '../middleware/auth.js';
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 
-// Tone presets for streaming
-const TONE_PRESETS = {
-  calm: "Speak slowly and reassuringly with minimal emotion. Use simple, clear language.",
-  friendly: "Be warm, casual, and slightly playful. Use natural conversational tone.",
-  professional: "Be concise, neutral, and task-focused. Avoid casual language.",
-  sassy: "Be confident and witty. Keep replies very short and punchy."
-};
 
-// Format messages helper for streaming
-function formatMessagesForOllama(messages, tone = 'friendly') {
-  const systemPrompt = `You are Vezora, a real-time voice assistant.
-
-CRITICAL RULES:
-- Default replies MUST be 1-3 short sentences ONLY.
-- Use spoken language, not written explanations.
-- NO long paragraphs or lists unless explicitly requested.
-- Be calm, confident, and natural.
-- Answer directly without preambles.
-
-${TONE_PRESETS[tone] || TONE_PRESETS.friendly}
-
-`;
-
-  let prompt = systemPrompt;
-  const recentMessages = messages.slice(-8);
-  
-  recentMessages.forEach(msg => {
-    if (msg.role === 'system') prompt += `\n${msg.content}\n`;
-    else if (msg.role === 'user') prompt += `\nUser: ${msg.content}\n`;
-    else if (msg.role === 'assistant') prompt += `\nVezora: ${msg.content}\n`;
-  });
-
-  prompt += '\nVezora:';
-  return prompt;
-}
 
 const router = express.Router();
 
@@ -106,8 +72,9 @@ router.post('/', optionalAuth, async (req, res) => {
     const settings = await getSettings(userId);
     const voiceCallMode = process.env.VOICE_CALL_MODE === 'true' && settings.voiceCallEnabled;
 
-    // Get last user message
-    const lastUserMessage = (message || messages[messages.length - 1]?.content || '').toLowerCase();
+    // Get last user message — preserve original casing for LLM, lowercase for detection
+    const lastUserMessageOriginal = message || messages[messages.length - 1]?.content || '';
+    const lastUserMessage = lastUserMessageOriginal.toLowerCase();
     
     // ==================== REMOVED: Regex-based task detection ====================
     // Now handled intelligently by coordinator with Groq
@@ -181,14 +148,14 @@ router.post('/', optionalAuth, async (req, res) => {
           aiProvider = useOllama ? 'ollama' : 'gemini';
         }
         
-        const coordinatorResult = await processWithContext(lastUserMessage, {
+        const coordinatorResult = await processWithContext(lastUserMessageOriginal, {
           userId,
           conversationHistory: conversationHistory || [],
           useContext: true,
           aiProvider
         });
 
-        const responseTime = 0; // Calculated internally by coordinator
+        const responseTime = 0;
         
         return res.json({
           id: Date.now().toString(),
@@ -199,9 +166,11 @@ router.post('/', optionalAuth, async (req, res) => {
             ? process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'
             : useOllama ? 'mistral' : 'gemini',
           provider: isGroqAvailable() ? 'groq' : (useOllama ? 'ollama' : 'gemini'),
-          intent: { action: 'chat', category: 'general' },
+          intent: { action: coordinatorResult.taskAction || 'chat', category: coordinatorResult.taskAction ? 'task' : 'general' },
           responseTime,
           contextUsed: coordinatorResult.contextUsed,
+          taskAction: coordinatorResult.taskAction || null,
+          actionConfirmations: coordinatorResult.actionConfirmations || [],
           contextSummary: {
             projects: coordinatorResult.context.projects?.length || 0,
             decisions: coordinatorResult.context.decisions?.length || 0,
@@ -246,7 +215,7 @@ router.post('/', optionalAuth, async (req, res) => {
         const groqResponse = await generateGroqCompletion(
           prompt,
           systemPrompt,
-          isVoice ? 200 : 2048,  // Shorter for voice, longer for chat
+          2048,
           0.7
         );
         
@@ -306,11 +275,12 @@ router.post('/', optionalAuth, async (req, res) => {
 
     // Parse intent for potential actions
     let intent;
+    const messageForParsing = lastUserMessageOriginal || '';
     try {
-      intent = useGemini ? await parseIntentWithGemini(message) : await parseIntent(message);
+      intent = useGemini ? await parseIntentWithGemini(messageForParsing) : await parseIntent(messageForParsing);
     } catch {
       // Fallback intent parsing
-      intent = await parseIntent(message);
+      intent = await parseIntent(messageForParsing);
     }
 
     // Log interaction

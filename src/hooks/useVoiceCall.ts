@@ -56,7 +56,7 @@ export function useVoiceCall(): UseVoiceCallReturn {
   }, [voiceTranscript, isVoiceCallActive, isProcessing]);
 
   /**
-   * Handle recognized speech with STREAMING and CHUNKED VOICE PLAYBACK
+   * Handle recognized speech — send to backend and speak response
    */
   const handleSpeechRecognized = useCallback(async (recognizedText: string) => {
     if (!recognizedText.trim()) return;
@@ -66,11 +66,6 @@ export function useVoiceCall(): UseVoiceCallReturn {
     setResponse(''); // Clear previous response
 
     try {
-      // Immediately indicate processing
-      if (!isMuted) {
-        speak("One moment"); // Quick feedback
-      }
-
       // Use main /api/chat endpoint (includes coordinator + task creation)
       const fetchResponse = await fetch(`${BACKEND_URL}/api/chat`, {
         method: 'POST',
@@ -90,15 +85,24 @@ export function useVoiceCall(): UseVoiceCallReturn {
       }
 
       const data = await fetchResponse.json();
-      const fullResponse = data.content || '';
+      
+      // Build the display response — include task action confirmations
+      let fullResponse = data.content || '';
+      if (data.actionConfirmations && data.actionConfirmations.length > 0 && data.taskAction) {
+        const confirmationText = data.actionConfirmations.join('\n');
+        if (!fullResponse.includes('✅') && !fullResponse.includes('📋')) {
+          fullResponse = confirmationText + '\n\n' + fullResponse;
+        }
+      }
+      
       setResponse(fullResponse);
 
-      // Speak the response
-      if (!isMuted && fullResponse) {
-        speak(fullResponse);
+      // Speak the response (use original content for cleaner TTS)
+      if (!isMuted && data.content) {
+        speak(data.content);
       }
 
-      // Restart listening after speech
+      // Restart listening after speech completes
       setTimeout(() => {
         setIsProcessing(false);
         if (isVoiceCallActive) {
@@ -111,32 +115,8 @@ export function useVoiceCall(): UseVoiceCallReturn {
     } catch (error) {
       console.error('Voice call error:', error);
       
-      // Fallback retry
-      try {
-        const fallbackResponse = await fetch(`${BACKEND_URL}/api/chat`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({
-            messages: [{ role: 'user', content: recognizedText }],
-            useContext: true,
-            includeMemory: false
-          })
-        });
-
-        if (fallbackResponse.ok) {
-          const data = await fallbackResponse.json();
-          setResponse(data.content);
-          if (!isMuted) speak(data.content);
-        } else {
-          throw new Error('Fallback also failed');
-        }
-      } catch (fallbackError) {
-        setResponse('Sorry, I encountered an error.');
-        if (!isMuted) speak('Sorry, I encountered an error');
-      }
+      setResponse('Sorry, I encountered an error. Please try again.');
+      if (!isMuted) speak('Sorry, I encountered an error. Please try again.');
 
       setIsProcessing(false);
       
@@ -149,34 +129,7 @@ export function useVoiceCall(): UseVoiceCallReturn {
         }
       }, 2000);
     }
-  }, [isMuted, isVoiceCallActive, speak, stopListening, startListening, clearVoiceTranscript]);
-
-  /**
-   * Play audio from backend (base64 or URL)
-   */
-  const playAudio = useCallback(async (audioData: string) => {
-    try {
-      // If base64, convert to blob URL
-      let audioUrl = audioData;
-      if (audioData.startsWith('data:') || !audioData.startsWith('http')) {
-        const audioBlob = base64ToBlob(audioData, 'audio/mp3');
-        audioUrl = URL.createObjectURL(audioBlob);
-      }
-
-      // Create and play audio
-      audioRef.current = new Audio(audioUrl);
-      await audioRef.current.play();
-
-      // Clean up blob URL after playing
-      audioRef.current.addEventListener('ended', () => {
-        if (audioUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(audioUrl);
-        }
-      });
-    } catch (error) {
-      console.error('Audio playback error:', error);
-    }
-  }, []);
+  }, [isMuted, isVoiceCallActive, speak, stopListening, startListening, clearVoiceTranscript, token]);
 
   /**
    * Start voice call mode
@@ -252,25 +205,3 @@ export function useVoiceCall(): UseVoiceCallReturn {
   };
 }
 
-/**
- * Convert base64 to Blob
- */
-function base64ToBlob(base64: string, contentType: string): Blob {
-  const cleanBase64 = base64.replace(/^data:.*?;base64,/, '');
-  const byteCharacters = atob(cleanBase64);
-  const byteArrays = [];
-
-  for (let offset = 0; offset < byteCharacters.length; offset += 512) {
-    const slice = byteCharacters.slice(offset, offset + 512);
-    const byteNumbers = new Array(slice.length);
-    
-    for (let i = 0; i < slice.length; i++) {
-      byteNumbers[i] = slice.charCodeAt(i);
-    }
-    
-    const byteArray = new Uint8Array(byteNumbers);
-    byteArrays.push(byteArray);
-  }
-
-  return new Blob(byteArrays, { type: contentType });
-}

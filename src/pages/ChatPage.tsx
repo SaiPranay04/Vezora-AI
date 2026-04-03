@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ChatBox, type Message } from '../components/ChatBox';
 import { InputPanel } from '../components/InputPanel';
 import { AppShortcuts } from '../components/AppShortcuts';
@@ -27,13 +27,15 @@ export const ChatPage = () => {
     } = useChats();
 
     const [isTyping, setIsTyping] = useState(false);
+    const lastProcessedTranscript = useRef<string>('');
 
     // Get messages from active chat
     const messages = activeChat?.messages || [];
 
-    // Auto-send when transcript is final (simple V1 logic)
+    // Auto-send when transcript is final — with debounce to prevent double-firing
     useEffect(() => {
-        if (transcript) {
+        if (transcript && transcript !== lastProcessedTranscript.current) {
+            lastProcessedTranscript.current = transcript;
             handleSend(transcript);
         }
     }, [transcript]);
@@ -51,15 +53,16 @@ export const ChatPage = () => {
         const updatedMessages = [...messages, newUserMsg];
         updateMessages(updatedMessages);
         setTranscript(''); // Clear for next turn
+        lastProcessedTranscript.current = '';
 
-        // Get REAL AI Response from backend WITH CONVERSATION CONTEXT
+        // Get AI Response from backend WITH CONVERSATION CONTEXT
         setIsTyping(true);
         
         try {
             // Build conversation history (last 10 messages for context)
             const conversationHistory = updatedMessages
-                .filter(msg => msg.role !== 'system') // Exclude system messages
-                .slice(-10) // Keep last 10 messages (5 exchanges)
+                .filter(msg => msg.role !== 'system')
+                .slice(-10)
                 .map(msg => ({
                     role: msg.role,
                     content: msg.content
@@ -72,8 +75,8 @@ export const ChatPage = () => {
                     'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({
-                    messages: conversationHistory, // Send full conversation history
-                    includeMemory: false // Disabled for speed (conversation context is enough)
+                    messages: conversationHistory,
+                    includeMemory: false
                 })
             });
 
@@ -85,15 +88,25 @@ export const ChatPage = () => {
             
             setIsTyping(false);
 
+            // Build response content — include task action confirmations if present
+            let responseContent = data.content;
+            if (data.actionConfirmations && data.actionConfirmations.length > 0 && data.taskAction) {
+                // If the LLM response doesn't already include the confirmation, prepend it
+                const confirmationText = data.actionConfirmations.join('\n');
+                if (!responseContent.includes('✅') && !responseContent.includes('📋')) {
+                    responseContent = confirmationText + '\n\n' + responseContent;
+                }
+            }
+
             const newAiMsg: Message = {
                 id: data.id || (Date.now() + 1).toString(),
                 role: 'assistant',
-                content: data.content,
+                content: responseContent,
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             };
             updateMessages([...updatedMessages, newAiMsg]);
 
-            // Speak the response
+            // Speak the response (use original content for cleaner TTS)
             speak(data.content);
 
         } catch (error) {
@@ -153,7 +166,7 @@ export const ChatPage = () => {
                 </div>
                 
                 <ChatBox 
-                    messages={messages} 
+                    messages={messages.filter(m => m.role !== 'system') as Message[]} 
                     isTyping={isTyping}
                     onReplayMessage={(content) => speak(content)}
                 />

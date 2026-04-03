@@ -4,17 +4,18 @@
  * 
  * FLOW:
  * 1. User Input
- * 2. Retrieve Relevant Context (memories, tasks, decisions)
- * 3. Build Structured Prompt
- * 4. Call LLM
- * 5. Analyze Response for Memory Updates
- * 6. Store Important Information
+ * 2. Classify Intent (fast Groq call)
+ * 3. Execute Task Actions (add/delete/update/list) BEFORE LLM response
+ * 4. Retrieve Relevant Context (memories, tasks, decisions)
+ * 5. Build Structured Prompt (with action confirmation context)
+ * 6. Call LLM
+ * 7. Analyze Response for Memory Updates (post-response, non-blocking)
  */
 
 // Using vector-based retrieval for semantic search
 import { getRelevantContext, formatContextForPrompt, getDailySummaryContext } from './retrievalService.vector.js';
 import { addProject, addDecision, addPreference } from './memoryService.pg.js';
-import { addTask, getTasks, updateTask } from './taskService.js';
+import { addTask, getTasks, updateTask, deleteTask } from './taskService.js';
 import { generateGroqCompletion, isGroqAvailable } from '../utils/groqClient.js';
 import { generateChatCompletion, isOllamaHealthy } from '../utils/ollamaClient.js';
 import { generateGeminiCompletion, isGeminiAvailable } from '../utils/geminiClient.js';
@@ -49,9 +50,255 @@ function needsContextRetrieval(userInput) {
   if (simpleQuestions.some(q => input.includes(q))) {
     return false;
   }
+
+  // Skip context for task deletion/listing (we handle these directly)
+  const taskActionPatterns = [
+    'delete task', 'remove task', 'delete the', 'remove the',
+    'show my tasks', 'list my tasks', 'list tasks', 'what are my tasks',
+    'show my to-do', 'show my todos', 'what\'s on my to-do',
+    'mark', 'complete', 'finish', 'done with'
+  ];
+  if (taskActionPatterns.some(pattern => input.includes(pattern))) {
+    return false;
+  }
   
   // All other queries need context for personalized responses
   return true;
+}
+
+// ==================== INTENT CLASSIFICATION (PRE-RESPONSE) ====================
+
+/**
+ * Classify user intent using Groq BEFORE generating the main LLM response.
+ * This allows us to execute task actions and inject confirmation context.
+ * Returns structured intent data.
+ */
+async function classifyIntent(userInput, userId) {
+  try {
+    if (!isGroqAvailable()) {
+      console.log('⚠️  [INTENT] Groq not available, skipping intent classification');
+      return { intent: 'general_chat' };
+    }
+
+    const classificationPrompt = `Analyze this user message and determine the intent. Return ONLY valid JSON.
+
+User Message: "${userInput}"
+
+Classify the intent into exactly ONE of these categories:
+
+{
+  "intent": "task_create" | "task_delete" | "task_update" | "task_list" | "general_chat" | "project" | "decision" | "preference" | "greeting",
+  "task_create": { "title": "clean task title", "priority": "low|medium|high", "description": "optional description", "deadline": "ISO date string or null" } | null,
+  "task_delete": { "task_name": "partial name to search for" } | null,
+  "task_update": { "task_name": "partial name to search for", "updates": { "status": "completed|in_progress|pending", "title": "new title or null", "priority": "low|medium|high or null", "deadline": "ISO date or null" } } | null,
+  "task_list": { "filter": "all|pending|in_progress|completed|high_priority|overdue" } | null
+}
+
+RULES:
+- "add task buy groceries" / "remind me to buy milk" / "add buy groceries to my to-do" → intent: "task_create"
+- "delete the grocery task" / "remove buy milk from my to-do" → intent: "task_delete"
+- "mark groceries as done" / "complete the report task" / "update meeting to 6pm" → intent: "task_update"
+- "show my tasks" / "what's on my to-do list" / "list pending tasks" → intent: "task_list"
+- For task_create: Extract ONLY the core task title. Remove command words like "add task", "remind me to", "to my to do"
+- For task_delete/task_update: task_name should be a partial name to fuzzy-match against existing tasks
+- For task_update status: "done"/"finished"/"completed" → "completed", "start"/"working on" → "in_progress", "reset"/"undo" → "pending"
+- If the message is a general question, conversation, or anything non-task → intent: "general_chat"
+- Return ONLY the JSON object, no other text`;
+
+    const groqResponse = await generateGroqCompletion(
+      classificationPrompt,
+      'You are a precise intent classifier. Return ONLY valid JSON, no explanation.',
+      400,
+      0.1 // Very low temperature for consistent classification
+    );
+
+    // Parse JSON from response
+    const jsonMatch = groqResponse.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.log('⚠️  [INTENT] No JSON found in classification response');
+      return { intent: 'general_chat' };
+    }
+
+    const result = JSON.parse(jsonMatch[0]);
+    console.log(`🎯 [INTENT] Classified as: ${result.intent}`);
+    return result;
+
+  } catch (error) {
+    console.error('❌ [INTENT] Classification error:', error.message);
+    return { intent: 'general_chat' };
+  }
+}
+
+/**
+ * Execute task actions based on classified intent.
+ * Returns a confirmation message to inject into the LLM prompt.
+ */
+async function executeTaskAction(intent, userId) {
+  const confirmations = [];
+
+  try {
+    switch (intent.intent) {
+      case 'task_create': {
+        if (!intent.task_create?.title) break;
+
+        // Duplicate detection: check if a similar task already exists
+        const existingTasks = await getTasks(userId, {});
+        const normalizedTitle = intent.task_create.title.toLowerCase().trim();
+        const duplicate = existingTasks.find(t => 
+          t.title.toLowerCase().trim() === normalizedTitle ||
+          t.title.toLowerCase().includes(normalizedTitle) && normalizedTitle.length > 5
+        );
+
+        if (duplicate && duplicate.status !== 'completed') {
+          confirmations.push(`⚠️ A similar task already exists: "${duplicate.title}" (status: ${duplicate.status}). No duplicate was created.`);
+          break;
+        }
+
+        const newTask = await addTask(userId, {
+          title: intent.task_create.title,
+          description: intent.task_create.description || '',
+          priority: intent.task_create.priority || 'medium',
+          deadline: intent.task_create.deadline || null,
+          status: 'pending'
+        });
+        confirmations.push(`✅ Task created: "${newTask.title}" [${newTask.priority} priority]${newTask.deadline ? ` — due ${new Date(newTask.deadline).toLocaleDateString()}` : ''}`);
+        console.log(`✅ [ACTION] Task created: "${newTask.title}"`);
+        break;
+      }
+
+      case 'task_delete': {
+        if (!intent.task_delete?.task_name) break;
+
+        const allTasks = await getTasks(userId, {});
+        const matchedTask = fuzzyMatchTask(allTasks, intent.task_delete.task_name);
+
+        if (matchedTask) {
+          await deleteTask(userId, matchedTask.id);
+          confirmations.push(`✅ Task deleted: "${matchedTask.title}"`);
+          console.log(`✅ [ACTION] Task deleted: "${matchedTask.title}"`);
+        } else {
+          confirmations.push(`⚠️ No task found matching "${intent.task_delete.task_name}". Available tasks: ${allTasks.filter(t => t.status !== 'completed').map(t => `"${t.title}"`).slice(0, 5).join(', ')}`);
+          console.log(`⚠️ [ACTION] No task found matching: "${intent.task_delete.task_name}"`);
+        }
+        break;
+      }
+
+      case 'task_update': {
+        if (!intent.task_update?.task_name) break;
+
+        const allTasks = await getTasks(userId, {});
+        const matchedTask = fuzzyMatchTask(allTasks, intent.task_update.task_name);
+
+        if (matchedTask) {
+          const updates = {};
+          if (intent.task_update.updates?.status) updates.status = intent.task_update.updates.status;
+          if (intent.task_update.updates?.title) updates.title = intent.task_update.updates.title;
+          if (intent.task_update.updates?.priority) updates.priority = intent.task_update.updates.priority;
+          if (intent.task_update.updates?.deadline) updates.deadline = intent.task_update.updates.deadline;
+
+          if (Object.keys(updates).length > 0) {
+            await updateTask(userId, matchedTask.id, updates);
+            const changeDescriptions = Object.entries(updates).map(([k, v]) => `${k}: ${v}`).join(', ');
+            confirmations.push(`✅ Task updated: "${matchedTask.title}" → ${changeDescriptions}`);
+            console.log(`✅ [ACTION] Task updated: "${matchedTask.title}" → ${changeDescriptions}`);
+          }
+        } else {
+          confirmations.push(`⚠️ No task found matching "${intent.task_update.task_name}". Available tasks: ${allTasks.filter(t => t.status !== 'completed').map(t => `"${t.title}"`).slice(0, 5).join(', ')}`);
+        }
+        break;
+      }
+
+      case 'task_list': {
+        const filter = intent.task_list?.filter || 'all';
+        let tasks;
+
+        switch (filter) {
+          case 'pending':
+            tasks = await getTasks(userId, { status: 'pending' });
+            break;
+          case 'in_progress':
+            tasks = await getTasks(userId, { status: 'in_progress' });
+            break;
+          case 'completed':
+            tasks = await getTasks(userId, { status: 'completed' });
+            break;
+          case 'high_priority':
+            tasks = await getTasks(userId, { priority: 'high' });
+            break;
+          default:
+            tasks = await getTasks(userId, {});
+        }
+
+        if (tasks.length === 0) {
+          confirmations.push(`📋 No ${filter !== 'all' ? filter.replace('_', ' ') + ' ' : ''}tasks found.`);
+        } else {
+          const taskList = tasks.map((t, i) => {
+            const statusIcon = t.status === 'completed' ? '✅' : t.status === 'in_progress' ? '🔄' : '⬜';
+            const priorityTag = t.priority === 'high' ? ' 🔴' : t.priority === 'medium' ? ' 🟡' : '';
+            const deadline = t.deadline ? ` (due ${new Date(t.deadline).toLocaleDateString()})` : '';
+            return `${i + 1}. ${statusIcon} ${t.title}${priorityTag}${deadline}`;
+          }).join('\n');
+          confirmations.push(`📋 **Your ${filter !== 'all' ? filter.replace('_', ' ') + ' ' : ''}tasks (${tasks.length}):**\n${taskList}`);
+        }
+        console.log(`📋 [ACTION] Listed ${tasks.length} tasks (filter: ${filter})`);
+        break;
+      }
+    }
+  } catch (error) {
+    console.error('❌ [ACTION] Task action error:', error.message);
+    confirmations.push(`❌ Failed to execute task action: ${error.message}`);
+  }
+
+  return confirmations;
+}
+
+/**
+ * Fuzzy match a task by name with scoring.
+ * Returns the best matching task or null.
+ */
+function fuzzyMatchTask(tasks, searchName) {
+  if (!searchName || !tasks.length) return null;
+
+  const search = searchName.toLowerCase().trim();
+  let bestMatch = null;
+  let bestScore = 0;
+
+  for (const task of tasks) {
+    const title = task.title.toLowerCase();
+    let score = 0;
+
+    // Exact match
+    if (title === search) {
+      return task; // Perfect match, return immediately
+    }
+
+    // Title contains search term
+    if (title.includes(search)) {
+      score = search.length / title.length; // Prefer shorter titles that match
+      score += 0.5; // Bonus for containing
+    }
+
+    // Search term contains title
+    if (search.includes(title)) {
+      score = title.length / search.length;
+      score += 0.3;
+    }
+
+    // Word overlap scoring
+    const searchWords = search.split(/\s+/);
+    const titleWords = title.split(/\s+/);
+    const commonWords = searchWords.filter(w => titleWords.some(tw => tw.includes(w) || w.includes(tw)));
+    if (commonWords.length > 0) {
+      score += (commonWords.length / Math.max(searchWords.length, titleWords.length)) * 0.4;
+    }
+
+    if (score > bestScore && score >= 0.3) { // Minimum threshold
+      bestScore = score;
+      bestMatch = task;
+    }
+  }
+
+  return bestMatch;
 }
 
 /**
@@ -70,33 +317,55 @@ export async function processWithContext(userInput, options = {}) {
     console.log('\n🧠 [COORDINATOR] Processing input with context');
     console.log(`📝 User: "${userInput.substring(0, 100)}${userInput.length > 100 ? '...' : ''}"`);
 
+    // ==================== STEP 1: CLASSIFY INTENT (PRE-RESPONSE) ====================
+    const intent = await classifyIntent(userInput, userId);
+    
+    // ==================== STEP 2: EXECUTE TASK ACTIONS ====================
+    let actionConfirmations = [];
+    const isTaskAction = ['task_create', 'task_delete', 'task_update', 'task_list'].includes(intent.intent);
+
+    if (isTaskAction && userId) {
+      console.log(`⚡ [COORDINATOR] Executing task action: ${intent.intent}`);
+      actionConfirmations = await executeTaskAction(intent, userId);
+    }
+
+    // ==================== STEP 3: RETRIEVE CONTEXT (INTELLIGENT) ====================
     let context = null;
     let contextText = '';
-
-    // ==================== STEP 1: RETRIEVE CONTEXT (INTELLIGENT) ====================
     const shouldRetrieveContext = useContext && needsContextRetrieval(userInput);
     
     if (shouldRetrieveContext) {
       console.log('🔍 [COORDINATOR] Retrieving relevant context...');
-      context = await getRelevantContext(userInput, { userId });
-      
-      if (context.relevanceFound) {
-        contextText = formatContextForPrompt(context);
-        console.log('✅ [COORDINATOR] Relevant context found');
-        console.log(`   - Projects: ${context.projects.length}`);
-        console.log(`   - Decisions: ${context.decisions.length}`);
-        console.log(`   - Tasks: ${context.tasks.length}`);
-        console.log(`   - Preferences: ${context.preferences.length}`);
-      } else {
-        console.log('ℹ️  [COORDINATOR] No highly relevant context found, using general context');
+      try {
+        context = await getRelevantContext(userInput, { userId });
+        
+        if (context.relevanceFound) {
+          contextText = formatContextForPrompt(context);
+          console.log('✅ [COORDINATOR] Relevant context found');
+        }
+      } catch (ctxError) {
+        console.log('⚠️  [COORDINATOR] Context retrieval failed, continuing without:', ctxError.message);
       }
     } else {
       console.log('⚡ [COORDINATOR] Skipping context retrieval (not needed for this query)');
     }
 
-    // ==================== STEP 2: BUILD STRUCTURED PROMPT ====================
-    const systemPrompt = buildSystemPrompt(contextText);
+    // ==================== STEP 4: BUILD STRUCTURED PROMPT ====================
+    const systemPrompt = buildSystemPrompt(contextText, actionConfirmations);
     
+    // For pure task_list responses, we can return the list directly
+    // without an LLM call to save latency and cost
+    if (intent.intent === 'task_list' && actionConfirmations.length > 0) {
+      console.log('⚡ [COORDINATOR] Returning task list directly (no LLM call needed)');
+      return {
+        response: actionConfirmations.join('\n\n'),
+        context: context || {},
+        contextUsed: false,
+        taskAction: intent.intent,
+        actionConfirmations
+      };
+    }
+
     // Build messages array
     const messages = [
       { role: 'system', content: systemPrompt }
@@ -111,30 +380,30 @@ export async function processWithContext(userInput, options = {}) {
     // Add current user message
     messages.push({ role: 'user', content: userInput });
 
-    console.log('📋 [COORDINATOR] Prompt built with context');
+    console.log('📋 [COORDINATOR] Prompt built');
 
-    // ==================== STEP 3: CALL LLM ====================
+    // ==================== STEP 5: CALL LLM ====================
     console.log('🤖 [COORDINATOR] Calling LLM...');
     
     let response;
     try {
       // PRIMARY: Try Groq first (fastest and most reliable)
       if (isGroqAvailable()) {
-        console.log('🤖 [COORDINATOR] Using Groq (llama-3.1-70b-versatile)');
+        console.log('🤖 [COORDINATOR] Using Groq');
         
         // Convert messages to prompt format for Groq
-        const systemPrompt = messages[0]?.content || 'You are Vezora AI, a helpful and intelligent assistant.';
+        const sysPrompt = messages[0]?.content || 'You are Vezora AI, a helpful and intelligent assistant.';
         const userMessages = messages.slice(1);
         const prompt = userMessages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
         
         response = await generateGroqCompletion(
           prompt,
-          systemPrompt,
-          2048,  // maxTokens
-          0.7    // temperature
+          sysPrompt,
+          2048,
+          0.7
         );
       }
-      // FALLBACK: Ollama (Gemini disabled)
+      // FALLBACK: Ollama
       else if (await isOllamaHealthy()) {
         console.log('🤖 [COORDINATOR] Groq not available, using Ollama');
         const result = await generateChatCompletion(messages, {
@@ -145,18 +414,28 @@ export async function processWithContext(userInput, options = {}) {
       }
       // No fallback available
       else {
-        throw new Error('Groq not available and no fallback AI configured');
+        throw new Error('No AI provider available');
       }
     } catch (llmError) {
       console.error('❌ [COORDINATOR] LLM error:', llmError.message);
       
-      // CASCADE FALLBACK LOGIC
+      // If we have task action confirmations, return those even if LLM fails
+      if (actionConfirmations.length > 0) {
+        return {
+          response: actionConfirmations.join('\n\n'),
+          context: context || {},
+          contextUsed: false,
+          taskAction: intent.intent,
+          actionConfirmations
+        };
+      }
+      
+      // CASCADE FALLBACK
       try {
-        // If Groq failed, try Ollama (Gemini disabled)
         console.log('🔄 [COORDINATOR] Falling back to Ollama...');
         const ollamaReady = await isOllamaHealthy();
         if (!ollamaReady) {
-          throw new Error('Groq failed and Ollama is not available');
+          throw new Error('All AI providers unavailable');
         }
         const result = await generateChatCompletion(messages, {
           temperature: 0.7,
@@ -165,22 +444,27 @@ export async function processWithContext(userInput, options = {}) {
         response = result.response || result;
       } catch (fallbackError) {
         console.error('❌ [COORDINATOR] All fallbacks failed:', fallbackError.message);
-        throw new Error('Groq is currently unavailable. Please try again later.');
+        throw new Error('AI is currently unavailable. Please try again later.');
       }
     }
 
     console.log('✅ [COORDINATOR] LLM response received');
 
-    // ==================== STEP 4: ANALYZE AND UPDATE MEMORY ====================
-    if (useContext) {
-      console.log('💾 [COORDINATOR] Analyzing response for memory updates...');
-      await analyzeAndUpdateMemory(userInput, response, userId);
+    // ==================== STEP 6: POST-RESPONSE MEMORY ANALYSIS (NON-BLOCKING) ====================
+    // Only for non-task intents (task actions are already handled in Step 2)
+    if (useContext && !isTaskAction && userId) {
+      // Fire and forget — don't block response
+      analyzeAndUpdateMemory(userInput, response, userId).catch(err => {
+        console.error('⚠️  [MEMORY] Background update failed:', err.message);
+      });
     }
 
     return {
       response,
       context: context || {},
-      contextUsed: useContext && context?.relevanceFound
+      contextUsed: useContext && context?.relevanceFound,
+      taskAction: isTaskAction ? intent.intent : null,
+      actionConfirmations
     };
 
   } catch (error) {
@@ -190,9 +474,9 @@ export async function processWithContext(userInput, options = {}) {
 }
 
 /**
- * Build system prompt with context
+ * Build system prompt with context and action confirmations
  */
-function buildSystemPrompt(contextText) {
+function buildSystemPrompt(contextText, actionConfirmations = []) {
   let prompt = `You are Vezora AI, an intelligent personal assistant that helps users manage their projects, tasks, and daily activities.
 
 You have access to the user's memory, including their active projects, important decisions, pending tasks, and preferences.
@@ -201,8 +485,16 @@ IMPORTANT GUIDELINES:
 - Be concise and actionable
 - Reference relevant context when appropriate
 - Guide the user rather than making autonomous decisions
-- If user mentions new tasks, projects, or decisions, acknowledge them clearly
+- If a task action was just performed, confirm it naturally and briefly
 - Always be helpful and proactive`;
+
+  // Inject action confirmations so the LLM knows what just happened
+  if (actionConfirmations.length > 0) {
+    prompt += `\n\n========== ACTION JUST PERFORMED ==========\n`;
+    prompt += actionConfirmations.join('\n');
+    prompt += `\n============================================`;
+    prompt += `\nAcknowledge the above action naturally in your response. Be brief — the user already sees the action result.`;
+  }
 
   if (contextText && contextText.length > 0) {
     prompt += `\n\n========== CONTEXT ==========\n${contextText}\n============================`;
@@ -212,97 +504,46 @@ IMPORTANT GUIDELINES:
 }
 
 /**
- * Analyze user input and AI response using Groq to intelligently detect and extract information
+ * Post-response memory analysis for non-task intents (projects, decisions, preferences)
+ * This runs in the background to avoid blocking the response
  */
 async function analyzeAndUpdateMemory(userInput, aiResponse, userId) {
-  // Skip memory updates if no userId
-  if (!userId) {
-    console.log('⚠️  [MEMORY] Skipping memory updates - no userId');
-    return;
-  }
+  if (!userId) return;
 
   try {
-    // ==================== USE GROQ FOR INTELLIGENT CLASSIFICATION ====================
-    const classificationPrompt = `Analyze this user message and determine what actions to take:
+    if (!isGroqAvailable()) return;
 
-User Message: "${userInput}"
-AI Response: "${aiResponse}"
+    const classificationPrompt = `Analyze this conversation exchange and extract structured data if present:
 
-Classify the user's intent and extract structured data. Return ONLY valid JSON:
+User: "${userInput}"
+AI: "${typeof aiResponse === 'string' ? aiResponse.substring(0, 300) : ''}"
 
+Return ONLY valid JSON:
 {
-  "intent": "task_create" | "task_update" | "project" | "decision" | "preference" | "query" | "greeting",
-  "task": { "title": "clean task title", "priority": "low|medium|high", "description": "optional" } | null,
-  "task_update": { "task_name": "name of existing task to find", "new_status": "completed|in_progress|pending" } | null,
   "project": { "name": "project name", "description": "what it's about" } | null,
   "decision": { "text": "what was decided", "context": "why" } | null,
   "preference": { "text": "user preference", "category": "type" } | null
 }
 
 RULES:
-- If the user says "mark/update/set [task name] as completed/done/finished" → intent is "task_update", fill task_update field
-- If the user says "add/create/new task [name]" OR "remind me to [name]" → intent is "task_create", fill task field
-- Extract ONLY the core action for task titles, remove command words like "add task", "remind me to", "to my to do"
-- For task_create: Extract clean, actionable title (e.g., "compare master universities" NOT "to my to do compare master universities")
-- For task_update: task_name should be the partial name of the task to match (e.g., "check files" from "mark check files as done")
-- new_status values: "completed" (done/finished/completed), "in_progress" (started/working on), "pending" (reset/undo)
-- If no structured data to extract, set all fields to null
-- Return ONLY the JSON object, no other text`;
+- Extract ONLY if the user clearly mentions a project, decision, or preference
+- Do NOT extract task-related data (tasks are handled separately)
+- If nothing to extract, return all null values
+- Return ONLY the JSON object`;
 
     const groqResponse = await generateGroqCompletion(
       classificationPrompt,
       'You are a data extraction expert. Return ONLY valid JSON.',
-      300,
+      200,
       0.2
     );
 
-    // Parse Groq's classification
     const jsonMatch = groqResponse.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.log('⚠️  [MEMORY] No structured data extracted');
-      return;
-    }
+    if (!jsonMatch) return;
 
     const extracted = JSON.parse(jsonMatch[0]);
-    console.log('🧠 [MEMORY] Groq classification:', extracted.intent);
 
-    // ==================== STORE BASED ON INTENT ====================
-
-    // Handle task STATUS UPDATE (find existing task by name, update its status)
-    if (extracted.task_update && extracted.task_update.task_name && extracted.task_update.new_status) {
-      try {
-        const allTasks = await getTasks(userId, {});
-        const searchName = extracted.task_update.task_name.toLowerCase();
-        
-        // Fuzzy match: find task whose title contains the search term
-        const matchedTask = allTasks.find(t => 
-          t.title.toLowerCase().includes(searchName) || 
-          searchName.includes(t.title.toLowerCase())
-        );
-
-        if (matchedTask) {
-          await updateTask(userId, matchedTask.id, { status: extracted.task_update.new_status });
-          console.log(`✅ [MEMORY] Task "${matchedTask.title}" updated to status: ${extracted.task_update.new_status}`);
-        } else {
-          console.log(`⚠️  [MEMORY] No task found matching: "${extracted.task_update.task_name}"`);
-        }
-      } catch (updateErr) {
-        console.error('❌ [MEMORY] Task update error:', updateErr.message);
-      }
-    }
-
-    // Handle task CREATION (only when intent is explicitly task_create)
-    if (extracted.intent === 'task_create' && extracted.task && extracted.task.title) {
-      await addTask(userId, {
-        title: extracted.task.title,
-        description: extracted.task.description || userInput,
-        priority: extracted.task.priority || 'medium',
-        status: 'pending'
-      });
-      console.log(`✅ [MEMORY] Task stored: "${extracted.task.title}"`);
-    }
-
-    if (extracted.project && extracted.project.name) {
+    if (extracted.project?.name) {
       await addProject(userId, extracted.project.name, {
         project_name: extracted.project.name,
         description: extracted.project.description || '',
@@ -311,7 +552,7 @@ RULES:
       console.log(`✅ [MEMORY] Project stored: "${extracted.project.name}"`);
     }
 
-    if (extracted.decision && extracted.decision.text) {
+    if (extracted.decision?.text) {
       await addDecision(userId, extracted.decision.text, {
         decision_text: extracted.decision.text,
         context: extracted.decision.context || '',
@@ -320,7 +561,7 @@ RULES:
       console.log(`✅ [MEMORY] Decision stored: "${extracted.decision.text}"`);
     }
 
-    if (extracted.preference && extracted.preference.text) {
+    if (extracted.preference?.text) {
       await addPreference(userId, extracted.preference.text, {
         preference: extracted.preference.text,
         category: extracted.preference.category || 'general'
@@ -330,12 +571,8 @@ RULES:
 
   } catch (error) {
     console.error('❌ [MEMORY] Update error:', error.message);
-    // Don't fail the whole request if memory update fails
   }
 }
-
-// ==================== OLD REGEX EXTRACTION FUNCTIONS REMOVED ====================
-// Now using Groq for intelligent semantic extraction in analyzeAndUpdateMemory()
 
 /**
  * Generate daily summary
@@ -367,13 +604,23 @@ Provide a brief, friendly summary highlighting:
       { role: 'user', content: prompt }
     ];
 
-    const result = await generateChatCompletion(messages, {
-      temperature: 0.7,
-      maxTokens: 512
-    });
-    const summary = result.response || result;
-    console.log('✅ [COORDINATOR] Daily summary generated');
+    let summary;
+    if (isGroqAvailable()) {
+      summary = await generateGroqCompletion(
+        prompt,
+        'You are Vezora AI, providing a helpful daily summary.',
+        512,
+        0.7
+      );
+    } else {
+      const result = await generateChatCompletion(messages, {
+        temperature: 0.7,
+        maxTokens: 512
+      });
+      summary = result.response || result;
+    }
     
+    console.log('✅ [COORDINATOR] Daily summary generated');
     return summary;
     
   } catch (error) {
@@ -388,7 +635,6 @@ Provide a brief, friendly summary highlighting:
 function formatDailySummary(summaryContext) {
   let text = '';
 
-  // Summary stats
   text += `📊 OVERVIEW:\n`;
   text += `  - Active Projects: ${summaryContext.summary.total_active_projects}\n`;
   text += `  - Overdue Tasks: ${summaryContext.summary.total_overdue_tasks}\n`;
@@ -396,7 +642,6 @@ function formatDailySummary(summaryContext) {
   text += `  - In Progress: ${summaryContext.summary.total_in_progress}\n`;
   text += `  - High Priority: ${summaryContext.summary.total_high_priority}\n\n`;
 
-  // Overdue tasks
   if (summaryContext.tasks.overdue.length > 0) {
     text += `⚠️ OVERDUE TASKS:\n`;
     summaryContext.tasks.overdue.forEach(task => {
@@ -405,7 +650,6 @@ function formatDailySummary(summaryContext) {
     text += '\n';
   }
 
-  // Upcoming deadlines
   if (summaryContext.tasks.upcoming.length > 0) {
     text += `📅 UPCOMING DEADLINES (Next 3 Days):\n`;
     summaryContext.tasks.upcoming.forEach(task => {
@@ -414,7 +658,6 @@ function formatDailySummary(summaryContext) {
     text += '\n';
   }
 
-  // Active projects
   if (summaryContext.projects.length > 0) {
     text += `📁 ACTIVE PROJECTS:\n`;
     summaryContext.projects.forEach(project => {

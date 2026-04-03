@@ -7,6 +7,8 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from '@dnd-kit/utilities';
 import { useAuth } from '../contexts/AuthContext';
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+
 interface Task {
   id: string;
   title: string;
@@ -214,7 +216,7 @@ export const TaskManagerPage = () => {
     if (!token) return;
     
     try {
-      const response = await fetch('http://localhost:5000/api/tasks', {
+      const response = await fetch(`${BACKEND_URL}/api/tasks`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -234,7 +236,7 @@ export const TaskManagerPage = () => {
     if (!newTask.title.trim()) return;
 
     try {
-      const response = await fetch('http://localhost:5000/api/tasks', {
+      const response = await fetch(`${BACKEND_URL}/api/tasks`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -261,7 +263,7 @@ export const TaskManagerPage = () => {
     if (!token) return;
     
     try {
-      const response = await fetch(`http://localhost:5000/api/tasks/${id}`, {
+      const response = await fetch(`${BACKEND_URL}/api/tasks/${id}`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -284,7 +286,7 @@ export const TaskManagerPage = () => {
     if (!token) return;
     
     try {
-      const response = await fetch(`http://localhost:5000/api/tasks/${id}`, {
+      const response = await fetch(`${BACKEND_URL}/api/tasks/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -305,7 +307,7 @@ export const TaskManagerPage = () => {
     
     setIsAiOrganizing(true);
     try {
-      const response = await fetch('http://localhost:5000/api/tasks/ai-organize', {
+      const response = await fetch(`${BACKEND_URL}/api/tasks/ai-organize`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

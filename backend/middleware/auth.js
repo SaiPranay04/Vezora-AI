@@ -140,17 +140,17 @@ export function validateOwnership(resourceUserId) {
  * Fallback to 'default' for backward compatibility during migration
  */
 export function getUserIdFromRequest(req) {
-  // Priority 1: Authenticated user ID
+  // Priority 1: Authenticated user ID (from JWT — trusted)
   if (req.userId) {
     return req.userId;
   }
 
-  // Priority 2: Query parameter (for migration/testing)
+  // Priority 2: Query parameter (ONLY when not authenticated — for testing/migration)
   if (req.query.userId) {
     return req.query.userId;
   }
 
-  // Priority 3: Body parameter (for POST requests during migration)
+  // Priority 3: Body parameter (ONLY when not authenticated — for migration)
   if (req.body && req.body.userId) {
     return req.body.userId;
   }
