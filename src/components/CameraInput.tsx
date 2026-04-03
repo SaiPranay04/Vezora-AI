@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Camera, X, Maximize2, Minimize2, Scan, Video, VideoOff } from 'lucide-react';
+import { Camera, X, Maximize2, Minimize2, Scan } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface CameraInputProps {

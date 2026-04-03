@@ -463,7 +463,7 @@ export const TaskManagerPage = () => {
                     task={task}
                     onEdit={setEditingTask}
                     onDelete={deleteTask}
-                    onStatusChange={updateTask}
+                    onStatusChange={(id, status) => updateTask(id, { status })}
                   />
                 ))
               )}

@@ -20,7 +20,7 @@ interface CalendarPanelProps {
 }
 
 export const CalendarPanel = ({ onClose }: CalendarPanelProps) => {
-    const [selectedDate, setSelectedDate] = useState(new Date());
+    const [selectedDate, _setSelectedDate] = useState(new Date());
     const [viewMode, setViewMode] = useState<'day' | 'week'>('day');
 
     // Mock events - In Tauri, this would come from Google Calendar API

@@ -9,14 +9,15 @@ interface WakeWordDetectorProps {
 }
 
 export const WakeWordDetector = ({ 
-    onWakeWordDetected, 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    onWakeWordDetected: _onWakeWordDetected, 
     wakeWord = "Hey Vezora" 
 }: WakeWordDetectorProps) => {
     const [isEnabled, setIsEnabled] = useState(false);
     const [isListening, setIsListening] = useState(false);
     const [sensitivity, setSensitivity] = useState(0.7);
     const [showSettings, setShowSettings] = useState(false);
-    const [detectionCount, setDetectionCount] = useState(0);
+    const [detectionCount, _setDetectionCount] = useState(0);
 
     // This is a placeholder for wake word detection
     // In Tauri app, you'd use:

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { Shield, Lock, Eye, EyeOff, Database, Trash2, Download, AlertTriangle } from 'lucide-react';
+import { Shield, Lock, Eye, Database, Trash2, Download, AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 
 export const PrivacyDashboard = () => {

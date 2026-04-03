@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Plus, Trash2, Edit2, Save, Zap, ChevronDown, ChevronRight } from 'lucide-react';
+import { Play, Plus, Trash2, Edit2, Zap, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface WorkflowStep {
     id: string;
@@ -46,7 +46,7 @@ export const WorkflowBuilder = () => {
     ]);
 
     const [expandedId, setExpandedId] = useState<string | null>(null);
-    const [isCreating, setIsCreating] = useState(false);
+    const [_isCreating, setIsCreating] = useState(false);
 
     const toggleWorkflow = (id: string) => {
         setWorkflows(workflows.map(w => 

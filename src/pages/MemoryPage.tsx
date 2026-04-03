@@ -108,7 +108,7 @@ export const MemoryPage = () => {
                             // Use actual confidence from backend
                             const confidenceValue = memory.confidence || 0;
                             const confidence = confidenceValue > 0.7 ? 'High' : confidenceValue > 0.4 ? 'Medium' : 'Low';
-                            const confidenceColors: Record<typeof confidenceLevels[number], string> = {
+                            const confidenceColors: Record<string, string> = {
                                 'High': 'bg-green-500/10 text-green-400 border-green-500/20',
                                 'Medium': 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
                                 'Low': 'bg-orange-500/10 text-orange-400 border-orange-500/20'

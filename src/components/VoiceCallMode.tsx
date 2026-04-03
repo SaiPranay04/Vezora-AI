@@ -32,7 +32,7 @@ export const VoiceCallMode = ({
   isMuted
 }: VoiceCallModeProps) => {
   const [waveform, setWaveform] = useState<number[]>([]);
-  const animationFrameRef = useRef<number>();
+  const animationFrameRef = useRef<number>(undefined);
 
   // Generate animated waveform
   useEffect(() => {
@@ -40,7 +40,7 @@ export const VoiceCallMode = ({
 
     const generateWaveform = () => {
       const bars = 32;
-      const newWaveform = Array.from({ length: bars }, (_, i) => {
+      const newWaveform = Array.from({ length: bars }, (_) => {
         if (isSpeaking) {
           // Active speaking: large dynamic waves
           return 0.3 + Math.random() * 0.7;
