@@ -35,6 +35,7 @@ async function loadLogsFromFile() {
  */
 async function saveLogsToFile() {
   try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
     await fs.writeFile(LOGS_FILE, JSON.stringify(logsCache, null, 2), 'utf8');
   } catch (error) {
     console.error('❌ Failed to save logs:', error);

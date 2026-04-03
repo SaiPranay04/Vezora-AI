@@ -51,6 +51,7 @@ async function loadSettingsFromFile() {
  */
 async function saveSettingsToFile() {
   try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
     await fs.writeFile(SETTINGS_FILE, JSON.stringify(settingsCache, null, 2), 'utf8');
   } catch (error) {
     console.error('❌ Failed to save settings:', error);

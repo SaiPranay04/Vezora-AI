@@ -35,6 +35,7 @@ async function loadMemoryFromFile() {
  */
 async function saveMemoryToFile() {
   try {
+    await fs.mkdir(DATA_DIR, { recursive: true });
     await fs.writeFile(MEMORY_FILE, JSON.stringify(memoryCache, null, 2), 'utf8');
   } catch (error) {
     console.error('❌ Failed to save memory:', error);
