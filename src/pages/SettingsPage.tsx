@@ -130,7 +130,7 @@ export const SettingsPage = () => {
                                             setPersonality(pers.id);
                                             localStorage.setItem('vezora_voice_tone', pers.id);
                                             // Save to backend
-                                            fetch('http://localhost:5000/api/settings', {
+                                            fetch(`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'}/api/settings`, {
                                                 method: 'PUT',
                                                 headers: { 'Content-Type': 'application/json' },
                                                 body: JSON.stringify({ voiceTone: pers.id })

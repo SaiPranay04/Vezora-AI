@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+
 interface UserProfile {
   name: string;
   email: string;
@@ -43,7 +45,7 @@ export const ProfilePage = () => {
     if (!token) return;
     
     try {
-      const response = await fetch('http://localhost:5000/api/profile', {
+      const response = await fetch(`${BACKEND_URL}/api/profile`, {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -63,7 +65,7 @@ export const ProfilePage = () => {
     
     setIsSaving(true);
     try {
-      const response = await fetch('http://localhost:5000/api/profile', {
+      const response = await fetch(`${BACKEND_URL}/api/profile`, {
         method: 'PUT',
         headers: { 
           'Content-Type': 'application/json',
@@ -93,7 +95,7 @@ export const ProfilePage = () => {
       // Get chat history from localStorage or memory
       const chatHistory = JSON.parse(localStorage.getItem('chat-history') || '[]');
       
-      const response = await fetch('http://localhost:5000/api/profile/extract-from-chat', {
+      const response = await fetch(`${BACKEND_URL}/api/profile/extract-from-chat`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

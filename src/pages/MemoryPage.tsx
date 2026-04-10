@@ -3,6 +3,8 @@ import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+
 interface Memory {
     id?: string;
     type?: string;
@@ -27,7 +29,7 @@ export const MemoryPage = () => {
         
         try {
             // Fetch from backend structured memory
-            const response = await fetch('http://localhost:5000/api/structured-memory?type=USER_PREFERENCE', {
+            const response = await fetch(`${BACKEND_URL}/api/structured-memory?type=USER_PREFERENCE`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                 },
@@ -44,7 +46,7 @@ export const MemoryPage = () => {
             }
 
             // Fetch profile for interests/topics
-            const profileResponse = await fetch('http://localhost:5000/api/profile', {
+            const profileResponse = await fetch(`${BACKEND_URL}/api/profile`, {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                 },

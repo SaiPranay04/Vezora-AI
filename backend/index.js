@@ -100,17 +100,21 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"], // Needed for Vite dev
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
       imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "http://localhost:5000", "ws://localhost:5000"],
+      connectSrc: ["'self'", "http://localhost:5000", "ws://localhost:5000", "https://vezora-server.onrender.com", "wss://vezora-server.onrender.com"],
     },
   },
-  crossOriginEmbedderPolicy: false, // Allows embedding resources
+  crossOriginEmbedderPolicy: false,
 }));
 
 // CORS
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:5173',
+    'https://vezora-ai.vercel.app',
+    'http://localhost:5173'
+  ],
   credentials: true
 }));
 
@@ -128,6 +132,19 @@ app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${req.method} ${req.path}`);
   next();
+});
+
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    name: 'Vezora AI Backend',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: '/health',
+      api: '/api/*'
+    }
+  });
 });
 
 // Health check endpoint
