@@ -97,12 +97,46 @@ export function useVoiceCall(): UseVoiceCallReturn {
       
       setResponse(fullResponse);
 
-      // Speak the response (use original content for cleaner TTS)
+      // Speak the response via Local Piper TTS Engine
       if (!isMuted && data.content) {
-        speak(data.content);
+        try {
+          const ttsResponse = await fetch(`${BACKEND_URL}/api/tts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: data.content })
+          });
+
+          if (ttsResponse.ok) {
+            const audioBlob = await ttsResponse.blob();
+            const audioUrl = URL.createObjectURL(audioBlob);
+            
+            if (audioRef.current) {
+              audioRef.current.pause();
+              audioRef.current.src = audioUrl;
+            } else {
+              audioRef.current = new Audio(audioUrl);
+            }
+            
+            audioRef.current.play();
+
+            audioRef.current.onended = () => {
+              setIsProcessing(false);
+              if (isVoiceCallActive) {
+                clearVoiceTranscript('');
+                lastProcessedTranscript.current = '';
+                startListening();
+              }
+            };
+            return; // Skip the generic setTimeout fallback
+          }
+        } catch (ttsError) {
+          console.error('TTS Streaming error:', ttsError);
+          // Fallback to local browser TTS if Piper fails
+          speak(data.content);
+        }
       }
 
-      // Restart listening after speech completes
+      // Restart listening after speech completes (Fallback if muted or TTS skipped)
       setTimeout(() => {
         setIsProcessing(false);
         if (isVoiceCallActive) {

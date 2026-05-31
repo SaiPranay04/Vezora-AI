@@ -1,14 +1,10 @@
 /**
- * Retrieval Service - Context retrieval using embeddings
- * Retrieves relevant memories, tasks, and decisions before LLM call
+ * Retrieval Service - In-Memory Vector-based semantic search
+ * Uses Voyage AI embeddings for intelligent context retrieval via JS Cosine Similarity fallback
  */
 
-import {
-  getProjects,
-  getDecisions,
-  getPreferences
-} from './memoryService.pg.js';
-
+import { generateQueryEmbedding, isVoyageAvailable } from '../utils/voyageClient.js';
+import { getDatabase } from '../utils/database.js';
 import {
   getPendingTasks,
   getInProgressTasks,
@@ -17,34 +13,24 @@ import {
   getHighPriorityTasks
 } from './taskService.js';
 
-// Simple keyword-based matching for now
-// Can be upgraded to vector embeddings later (using Ollama embeddings)
-function calculateRelevanceScore(text, query) {
-  const textLower = text.toLowerCase();
-  const queryLower = query.toLowerCase();
-  
-  // Split query into keywords
-  const keywords = queryLower.split(/\s+/).filter(word => word.length > 2);
-  
-  let score = 0;
-  
-  keywords.forEach(keyword => {
-    if (textLower.includes(keyword)) {
-      score += 1;
-    }
-  });
-  
-  // Bonus for exact phrase match
-  if (textLower.includes(queryLower)) {
-    score += 3;
+/**
+ * High-performance pure-JS Cosine Similarity function
+ */
+function cosineSimilarity(vecA, vecB) {
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
   }
-  
-  return score;
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 /**
- * Get relevant context for user input
- * Returns structured context to be passed to LLM
+ * Get relevant context using in-memory vector similarity search
  */
 export async function getRelevantContext(userInput, options = {}) {
   const {
@@ -56,7 +42,8 @@ export async function getRelevantContext(userInput, options = {}) {
     maxProjects = 3,
     maxDecisions = 3,
     maxTasks = 5,
-    maxPreferences = 3
+    maxPreferences = 3,
+    useVectorSearch = true 
   } = options;
 
   const context = {
@@ -65,215 +52,240 @@ export async function getRelevantContext(userInput, options = {}) {
     tasks: [],
     preferences: [],
     taskSummary: {},
-    relevanceFound: false
+    relevanceFound: false,
+    searchMethod: 'keyword' 
   };
 
   try {
-    // ==================== RETRIEVE PROJECTS ====================
-    if (includeProjects) {
-      const allProjects = await getProjects(userId);
-      
-      // Score and rank projects by relevance
-      const scoredProjects = allProjects.map(project => ({
-        ...project,
-        _relevance: calculateRelevanceScore(
-          `${project.project_name} ${project.description}`,
-          userInput
-        )
-      }));
+    const db = getDatabase();
 
-      // Sort by relevance and priority
-      scoredProjects.sort((a, b) => {
-        if (b._relevance !== a._relevance) {
-          return b._relevance - a._relevance;
+    // ==================== VECTOR SEARCH (NEW NATIVE JS FALLBACK!) ====================
+    if (useVectorSearch && isVoyageAvailable()) {
+      console.log('🔍 [RETRIEVAL] Using Local JS vector similarity search');
+      context.searchMethod = 'vector';
+
+      const queryEmbedding = await generateQueryEmbedding(userInput);
+
+      if (queryEmbedding) {
+        
+        // Helper to fetch and rank SQLite tables locally
+        const fetchAndRank = (table, typeCondition, limit) => {
+          let sql = `SELECT * FROM ${table} WHERE user_id = ? AND embedding IS NOT NULL`;
+          const params = [userId];
+          
+          if (typeCondition) {
+            sql += ` AND type = ?`;
+            params.push(typeCondition);
+          } else if (table === 'tasks') {
+             sql += ` AND status IN ('pending', 'in_progress')`;
+          }
+
+          const records = db.prepare(sql).all(...params);
+
+          // Calculate similarity
+          const ranked = records.map(row => {
+            const rowEmbedding = JSON.parse(row.embedding);
+            const score = cosineSimilarity(queryEmbedding, rowEmbedding);
+            return { ...row, relevance_score: score };
+          });
+
+          // Sort by highest similarity first and apply limit
+          return ranked
+            .sort((a, b) => b.relevance_score - a.relevance_score)
+            .slice(0, limit);
+        };
+
+        // ==================== RETRIEVE PROJECTS ====================
+        if (includeProjects) {
+          const ranked = fetchAndRank('memory', 'PROJECT_MEMORY', maxProjects);
+          context.projects = ranked.map(row => {
+            const content = JSON.parse(row.content);
+            return {
+              id: row.id,
+              name: content.name || JSON.parse(row.metadata).key,
+              ...content,
+              relevance_score: row.relevance_score.toFixed(4),
+              category: row.category,
+              created_at: row.created_at
+            };
+          });
         }
-        const priorityOrder = { high: 3, medium: 2, low: 1 };
-        return priorityOrder[b.priority] - priorityOrder[a.priority];
-      });
 
-      // Take top N relevant projects
-      context.projects = scoredProjects
-        .slice(0, maxProjects)
-        .filter(p => p._relevance > 0)
-        .map(({ _relevance, ...project }) => project);
-      
-      // If no relevant projects found, include high priority ones
-      if (context.projects.length === 0) {
-        context.projects = scoredProjects
-          .filter(p => p.priority === 'high')
-          .slice(0, 2)
-          .map(({ _relevance, ...project }) => project);
+        // ==================== RETRIEVE DECISIONS ====================
+        if (includeDecisions) {
+          const ranked = fetchAndRank('memory', 'DECISION_MEMORY', maxDecisions);
+          context.decisions = ranked.map(row => {
+            const content = JSON.parse(row.content);
+            return {
+              id: row.id,
+              decision: content.decision || JSON.parse(row.metadata).key,
+              ...content,
+              relevance_score: row.relevance_score.toFixed(4),
+              category: row.category,
+              created_at: row.created_at
+            };
+          });
+        }
+
+        // ==================== RETRIEVE PREFERENCES ====================
+        if (includePreferences) {
+          const ranked = fetchAndRank('memory', 'USER_PREFERENCE', maxPreferences);
+          context.preferences = ranked.map(row => {
+            const content = JSON.parse(row.content);
+            return {
+              id: row.id,
+              type: content.type || JSON.parse(row.metadata).key,
+              ...content,
+              relevance_score: row.relevance_score.toFixed(4),
+              category: row.category,
+              created_at: row.created_at
+            };
+          });
+        }
+
+        // ==================== RETRIEVE TASKS ====================
+        if (includeTasks) {
+          const ranked = fetchAndRank('tasks', null, maxTasks);
+          context.tasks = ranked.map(row => ({
+            ...row,
+            relevance_score: row.relevance_score.toFixed(4)
+          }));
+        }
+
+        context.relevanceFound = 
+          context.projects.length > 0 ||
+          context.decisions.length > 0 ||
+          context.tasks.length > 0 ||
+          context.preferences.length > 0;
+
+        if (context.relevanceFound) {
+          console.log('✅ [RETRIEVAL] Vector search found relevant context');
+          return context;
+        }
       }
     }
 
-    // ==================== RETRIEVE DECISIONS ====================
-    if (includeDecisions) {
-      // Get all decisions and filter by importance
-      const allDecisions = await getDecisions(userId);
-      const recentDecisions = allDecisions
-        .filter(d => d.importance_score >= 7)
-        .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
-        .slice(0, 10);
-      
-      // Score decisions by relevance
-      const scoredDecisions = recentDecisions.map(decision => ({
-        ...decision,
-        _relevance: calculateRelevanceScore(
-          `${decision.decision_text} ${decision.context || ''}`,
-          userInput
-        )
-      }));
+    // ==================== FALLBACK: KEYWORD SEARCH ====================
+    console.log('🔍 [RETRIEVAL] Vector search not available, using keyword fallback');
+    context.searchMethod = 'keyword';
 
-      scoredDecisions.sort((a, b) => {
-        if (b._relevance !== a._relevance) {
-          return b._relevance - a._relevance;
-        }
-        return b.importance_score - a.importance_score;
-      });
+    // Get all memories and filter by keyword matching
+    if (includeProjects) {
+      const allProjects = db.prepare(`SELECT * FROM memory WHERE user_id = ? AND type = 'PROJECT_MEMORY' ORDER BY created_at DESC`).all(userId);
 
-      context.decisions = scoredDecisions
-        .slice(0, maxDecisions)
-        .filter(d => d._relevance > 0)
-        .map(({ _relevance, ...decision }) => decision);
+      context.projects = allProjects
+        .map(p => {
+          const content = JSON.parse(p.content);
+          return {
+            id: p.id,
+            name: content?.name || JSON.parse(p.metadata).key,
+            ...content,
+            category: p.category,
+            created_at: p.created_at,
+            _relevance: calculateRelevanceScore(p.content, userInput)
+          };
+        })
+        .filter(p => p._relevance > 0)
+        .sort((a, b) => b._relevance - a._relevance)
+        .slice(0, maxProjects);
     }
 
-    // ==================== RETRIEVE TASKS ====================
+    if (includeDecisions) {
+      const allDecisions = db.prepare(`SELECT * FROM memory WHERE user_id = ? AND type = 'DECISION_MEMORY' ORDER BY created_at DESC`).all(userId);
+
+      context.decisions = allDecisions
+        .map(d => {
+          const content = JSON.parse(d.content);
+          return {
+            id: d.id,
+            decision: content?.decision || JSON.parse(d.metadata).key,
+            ...content,
+            category: d.category,
+            created_at: d.created_at,
+            _relevance: calculateRelevanceScore(d.content, userInput)
+          };
+        })
+        .filter(d => d._relevance > 0)
+        .sort((a, b) => b._relevance - a._relevance)
+        .slice(0, maxDecisions);
+    }
+
+    if (includePreferences) {
+      const allPreferences = db.prepare(`SELECT * FROM memory WHERE user_id = ? AND type = 'USER_PREFERENCE' ORDER BY created_at DESC`).all(userId);
+
+      context.preferences = allPreferences
+        .map(p => {
+          const content = JSON.parse(p.content);
+          return {
+            id: p.id,
+            type: content?.type || JSON.parse(p.metadata).key,
+            ...content,
+            category: p.category,
+            created_at: p.created_at,
+            _relevance: calculateRelevanceScore(p.content, userInput)
+          };
+        })
+        .filter(p => p._relevance > 0)
+        .sort((a, b) => b._relevance - a._relevance)
+        .slice(0, maxPreferences);
+    }
+
+    // ==================== TASK SUMMARY (ALWAYS INCLUDED) ====================
     if (includeTasks) {
-      const [pending, inProgress, upcoming, overdue, highPriority] = await Promise.all([
+      const [pending, inProgress, overdue, highPriority] = await Promise.all([
         getPendingTasks(userId),
         getInProgressTasks(userId),
-        getUpcomingDeadlines(userId, 3),
         getOverdueTasks(userId),
         getHighPriorityTasks(userId)
       ]);
 
-      // Combine and deduplicate
-      const allRelevantTasks = [...new Map(
-        [...overdue, ...highPriority, ...inProgress, ...upcoming, ...pending]
-          .map(task => [task.id, task])
-      ).values()];
-
-      // Score tasks by relevance
-      const scoredTasks = allRelevantTasks.map(task => ({
-        ...task,
-        _relevance: calculateRelevanceScore(
-          `${task.title} ${task.description}`,
-          userInput
-        )
-      }));
-
-      scoredTasks.sort((a, b) => {
-        // Prioritize overdue and high priority
-        if (overdue.some(t => t.id === a.id) && !overdue.some(t => t.id === b.id)) return -1;
-        if (!overdue.some(t => t.id === a.id) && overdue.some(t => t.id === b.id)) return 1;
-        
-        if (b._relevance !== a._relevance) {
-          return b._relevance - a._relevance;
-        }
-        
-        const priorityOrder = { high: 3, medium: 2, low: 1 };
-        return priorityOrder[b.priority] - priorityOrder[a.priority];
-      });
-
-      context.tasks = scoredTasks
-        .slice(0, maxTasks)
-        .map(({ _relevance, ...task }) => task);
-
-      // Task summary
       context.taskSummary = {
-        overdue: overdue.length,
-        upcoming: upcoming.length,
+        pending: pending.length,
         inProgress: inProgress.length,
-        highPriority: highPriority.length,
-        pending: pending.length
+        overdue: overdue.length,
+        highPriority: highPriority.length
       };
+
+      // Include most relevant tasks
+      context.tasks = [...highPriority, ...inProgress, ...overdue, ...pending]
+        .slice(0, maxTasks);
     }
 
-    // ==================== RETRIEVE PREFERENCES ====================
-    if (includePreferences) {
-      const allPreferences = await getPreferences(userId);
-      
-      // Score preferences by relevance
-      const scoredPreferences = allPreferences.map(pref => ({
-        ...pref,
-        _relevance: calculateRelevanceScore(pref.preference, userInput)
-      }));
-
-      scoredPreferences.sort((a, b) => {
-        if (b._relevance !== a._relevance) {
-          return b._relevance - a._relevance;
-        }
-        return b.confidence - a.confidence;
-      });
-
-      context.preferences = scoredPreferences
-        .slice(0, maxPreferences)
-        .filter(p => p._relevance > 0)
-        .map(({ _relevance, ...pref }) => pref);
-    }
-
-    // Mark if any relevant context was found
     context.relevanceFound = 
       context.projects.length > 0 ||
       context.decisions.length > 0 ||
-      (context.tasks.length > 0 && context.tasks.some(t => t._relevance > 0)) ||
+      context.tasks.length > 0 ||
       context.preferences.length > 0;
 
-  } catch (error) {
-    console.error('❌ Context retrieval error:', error);
-  }
+    return context;
 
-  return context;
+  } catch (error) {
+    console.error('❌ [RETRIEVAL] Context retrieval error:', error);
+    return context;
+  }
 }
 
 /**
- * Get daily summary context (all important items)
+ * Keyword-based relevance scoring (fallback)
  */
-export async function getDailySummaryContext(userId = 'default') {
-  try {
-    const allDecisions = await getDecisions(userId);
-    const recentDecisions = allDecisions
-      .filter(d => d.importance_score >= 7)
-      .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
-      .slice(0, 10);
-    
-    const [
-      activeProjects,
-      pending,
-      inProgress,
-      upcoming,
-      overdue,
-      highPriority
-    ] = await Promise.all([
-      getProjects(userId),
-      getPendingTasks(userId),
-      getInProgressTasks(userId),
-      getUpcomingDeadlines(userId, 3),
-      getOverdueTasks(userId),
-      getHighPriorityTasks(userId)
-    ]);
-
-    return {
-      projects: activeProjects.slice(0, 5),
-      decisions: recentDecisions.slice(0, 5),
-      tasks: {
-        overdue,
-        upcoming,
-        inProgress,
-        highPriority: highPriority.slice(0, 5)
-      },
-      summary: {
-        total_active_projects: activeProjects.length,
-        total_overdue_tasks: overdue.length,
-        total_upcoming_deadlines: upcoming.length,
-        total_in_progress: inProgress.length,
-        total_high_priority: highPriority.length
-      }
-    };
-  } catch (error) {
-    console.error('❌ Daily summary error:', error);
-    return null;
+function calculateRelevanceScore(text, query) {
+  const textLower = text.toLowerCase();
+  const queryLower = query.toLowerCase();
+  
+  const keywords = queryLower.split(/\s+/).filter(word => word.length > 2);
+  
+  let score = 0;
+  keywords.forEach(keyword => {
+    if (textLower.includes(keyword)) {
+      score += 1;
+    }
+  });
+  
+  if (textLower.includes(queryLower)) {
+    score += 3;
   }
+  
+  return score;
 }
 
 /**
@@ -282,55 +294,77 @@ export async function getDailySummaryContext(userId = 'default') {
 export function formatContextForPrompt(context) {
   let contextText = '';
 
-  // Projects
   if (context.projects && context.projects.length > 0) {
-    contextText += '\n📁 ACTIVE PROJECTS:\n';
+    contextText += '\n## Current Projects:\n';
     context.projects.forEach(project => {
-      contextText += `  - ${project.project_name} [${project.priority}]: ${project.description}\n`;
+      contextText += `- ${project.name} (${project.status || 'Active'}, ${project.priority || 'Medium'}): ${project.description || ''}\n`;
+      if (project.relevance_score) {
+        contextText += `  Relevance: ${(project.relevance_score * 100).toFixed(0)}%\n`;
+      }
     });
   }
 
-  // Important Decisions
   if (context.decisions && context.decisions.length > 0) {
-    contextText += '\n💡 RECENT IMPORTANT DECISIONS:\n';
+    contextText += '\n## Recent Decisions:\n';
     context.decisions.forEach(decision => {
-      contextText += `  - ${decision.decision_text}\n`;
+      contextText += `- ${decision.decision}\n`;
+      if (decision.context) contextText += `  Context: ${decision.context}\n`;
+      if (decision.relevance_score) {
+        contextText += `  Relevance: ${(decision.relevance_score * 100).toFixed(0)}%\n`;
+      }
     });
   }
 
-  // Tasks
   if (context.tasks && context.tasks.length > 0) {
-    contextText += '\n✅ RELEVANT TASKS:\n';
+    contextText += '\n## Active Tasks:\n';
     context.tasks.forEach(task => {
-      const deadlineInfo = task.deadline ? ` (Due: ${new Date(task.deadline).toLocaleDateString()})` : '';
-      contextText += `  - [${task.status}] ${task.title}${deadlineInfo}\n`;
+      contextText += `- [${task.status}] ${task.title} (${task.priority})`;
+      if (task.deadline) contextText += ` - Due: ${task.deadline}`;
+      if (task.relevance_score) {
+        contextText += ` | Relevance: ${(task.relevance_score * 100).toFixed(0)}%`;
+      }
+      contextText += '\n';
     });
   }
 
-  // Task Summary
-  if (context.taskSummary) {
-    const summary = context.taskSummary;
-    if (summary.overdue > 0 || summary.upcoming > 0 || summary.highPriority > 0) {
-      contextText += '\n📊 TASK SUMMARY:\n';
-      if (summary.overdue > 0) contextText += `  ⚠️ ${summary.overdue} overdue tasks\n`;
-      if (summary.upcoming > 0) contextText += `  📅 ${summary.upcoming} upcoming deadlines (next 3 days)\n`;
-      if (summary.highPriority > 0) contextText += `  🔴 ${summary.highPriority} high priority tasks\n`;
-    }
-  }
-
-  // Preferences
   if (context.preferences && context.preferences.length > 0) {
-    contextText += '\n⚙️ USER PREFERENCES:\n';
+    contextText += '\n## User Preferences:\n';
     context.preferences.forEach(pref => {
-      contextText += `  - ${pref.preference}\n`;
+      contextText += `- ${pref.type}: ${pref.value || pref.preference_value || ''}\n`;
     });
   }
 
-  return contextText.trim();
+  if (context.taskSummary) {
+    contextText += '\n## Task Summary:\n';
+    contextText += `- Pending: ${context.taskSummary.pending}\n`;
+    contextText += `- In Progress: ${context.taskSummary.inProgress}\n`;
+    contextText += `- Overdue: ${context.taskSummary.overdue}\n`;
+    contextText += `- High Priority: ${context.taskSummary.highPriority}\n`;
+  }
+
+  return contextText;
+}
+
+/**
+ * Get daily summary context (for coordinator)
+ */
+export async function getDailySummaryContext(userId) {
+  return await getRelevantContext('daily summary overview tasks projects', {
+    userId,
+    includeProjects: true,
+    includeDecisions: true,
+    includeTasks: true,
+    includePreferences: true,
+    maxProjects: 5,
+    maxDecisions: 5,
+    maxTasks: 10,
+    maxPreferences: 5,
+    useVectorSearch: true
+  });
 }
 
 export default {
   getRelevantContext,
-  getDailySummaryContext,
-  formatContextForPrompt
+  formatContextForPrompt,
+  getDailySummaryContext
 };

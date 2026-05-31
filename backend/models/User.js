@@ -1,107 +1,68 @@
 /**
  * User Model
- * Handles user CRUD operations with PostgreSQL
+ * Handles user CRUD operations with SQLite
  */
 
 import bcrypt from 'bcrypt';
-import { query } from '../config/database.js';
+import { getDatabase } from '../utils/database.js';
+import { v4 as uuidv4 } from 'uuid';
 
 const SALT_ROUNDS = 10;
 
-/**
- * Create a new user
- * @param {Object} userData - User data
- * @returns {Object} Created user (without password)
- */
 export async function createUser({ email, password, name }) {
+  const db = getDatabase();
   try {
-    // Check if user already exists
     const existingUser = await getUserByEmail(email);
     if (existingUser) {
       throw new Error('User with this email already exists');
     }
 
-    // Hash password
     const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
+    const id = uuidv4();
+    const created_at = new Date().toISOString();
 
-    // Insert user
-    const result = await query(
-      `INSERT INTO users (email, password_hash, name, created_at)
-       VALUES ($1, $2, $3, NOW())
-       RETURNING id, email, name, created_at`,
-      [email.toLowerCase(), password_hash, name]
-    );
+    db.prepare(`
+      INSERT INTO users (id, email, password_hash, name, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, email.toLowerCase(), password_hash, name, created_at, created_at);
 
-    return result.rows[0];
+    return { id, email, name, created_at };
   } catch (error) {
     console.error('❌ Create user error:', error.message);
     throw error;
   }
 }
 
-/**
- * Get user by ID
- * @param {string} userId - User ID
- * @returns {Object|null} User object or null
- */
 export async function getUserById(userId) {
+  const db = getDatabase();
   try {
-    const result = await query(
-      'SELECT id, email, name, avatar_url, created_at, last_login FROM users WHERE id = $1',
-      [userId]
-    );
-
-    return result.rows[0] || null;
+    return db.prepare('SELECT id, email, name, avatar_url, created_at, last_login FROM users WHERE id = ?').get(userId) || null;
   } catch (error) {
     console.error('❌ Get user by ID error:', error.message);
     throw error;
   }
 }
 
-/**
- * Get user by email
- * @param {string} email - User email
- * @returns {Object|null} User object or null
- */
 export async function getUserByEmail(email) {
+  const db = getDatabase();
   try {
-    const result = await query(
-      'SELECT id, email, name, avatar_url, created_at, last_login FROM users WHERE email = $1',
-      [email.toLowerCase()]
-    );
-
-    return result.rows[0] || null;
+    return db.prepare('SELECT id, email, name, avatar_url, created_at, last_login FROM users WHERE email = ?').get(email.toLowerCase()) || null;
   } catch (error) {
     console.error('❌ Get user by email error:', error.message);
     throw error;
   }
 }
 
-/**
- * Get user by email with password (for authentication)
- * @param {string} email - User email
- * @returns {Object|null} User object with password_hash or null
- */
 export async function getUserByEmailWithPassword(email) {
+  const db = getDatabase();
   try {
-    const result = await query(
-      'SELECT id, email, password_hash, name, avatar_url, created_at, last_login FROM users WHERE email = $1',
-      [email.toLowerCase()]
-    );
-
-    return result.rows[0] || null;
+    return db.prepare('SELECT id, email, password_hash, name, avatar_url, created_at, last_login FROM users WHERE email = ?').get(email.toLowerCase()) || null;
   } catch (error) {
     console.error('❌ Get user by email with password error:', error.message);
     throw error;
   }
 }
 
-/**
- * Verify user password
- * @param {string} email - User email
- * @param {string} password - Plain text password
- * @returns {Object|null} User object if valid, null if invalid
- */
 export async function verifyUserPassword(email, password) {
   try {
     const user = await getUserByEmailWithPassword(email);
@@ -114,12 +75,8 @@ export async function verifyUserPassword(email, password) {
       return null;
     }
 
-    // Remove password_hash before returning
     delete user.password_hash;
-
-    // Update last login
     await updateLastLogin(user.id);
-
     return user;
   } catch (error) {
     console.error('❌ Verify password error:', error.message);
@@ -127,24 +84,17 @@ export async function verifyUserPassword(email, password) {
   }
 }
 
-/**
- * Update user
- * @param {string} userId - User ID
- * @param {Object} updates - Fields to update
- * @returns {Object} Updated user
- */
 export async function updateUser(userId, updates) {
+  const db = getDatabase();
   try {
     const allowedFields = ['name', 'avatar_url'];
     const fields = [];
     const values = [];
-    let paramCount = 1;
 
     Object.keys(updates).forEach((key) => {
       if (allowedFields.includes(key)) {
-        fields.push(`${key} = $${paramCount}`);
+        fields.push(`${key} = ?`);
         values.push(updates[key]);
-        paramCount++;
       }
     });
 
@@ -152,38 +102,25 @@ export async function updateUser(userId, updates) {
       throw new Error('No valid fields to update');
     }
 
+    fields.push('updated_at = ?');
+    values.push(new Date().toISOString());
     values.push(userId);
 
-    const result = await query(
-      `UPDATE users 
-       SET ${fields.join(', ')}, updated_at = NOW()
-       WHERE id = $${paramCount}
-       RETURNING id, email, name, avatar_url, created_at`,
-      values
-    );
+    const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
+    db.prepare(sql).run(...values);
 
-    return result.rows[0];
+    return await getUserById(userId);
   } catch (error) {
     console.error('❌ Update user error:', error.message);
     throw error;
   }
 }
 
-/**
- * Update user password
- * @param {string} userId - User ID
- * @param {string} newPassword - New plain text password
- * @returns {boolean} Success status
- */
 export async function updateUserPassword(userId, newPassword) {
+  const db = getDatabase();
   try {
     const password_hash = await bcrypt.hash(newPassword, SALT_ROUNDS);
-
-    await query(
-      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
-      [password_hash, userId]
-    );
-
+    db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(password_hash, new Date().toISOString(), userId);
     return true;
   } catch (error) {
     console.error('❌ Update password error:', error.message);
@@ -191,61 +128,41 @@ export async function updateUserPassword(userId, newPassword) {
   }
 }
 
-/**
- * Update last login timestamp
- * @param {string} userId - User ID
- */
 export async function updateLastLogin(userId) {
+  const db = getDatabase();
   try {
-    await query(
-      'UPDATE users SET last_login = NOW() WHERE id = $1',
-      [userId]
-    );
+    db.prepare('UPDATE users SET last_login = ? WHERE id = ?').run(new Date().toISOString(), userId);
   } catch (error) {
     console.error('❌ Update last login error:', error.message);
   }
 }
 
-/**
- * Delete user
- * @param {string} userId - User ID
- * @returns {boolean} Success status
- */
 export async function deleteUser(userId) {
+  const db = getDatabase();
   try {
-    await query('DELETE FROM users WHERE id = $1', [userId]);
-    return true;
+    const result = db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    return result.changes > 0;
   } catch (error) {
     console.error('❌ Delete user error:', error.message);
     throw error;
   }
 }
 
-/**
- * Get all users (admin only)
- * @returns {Array} Array of users
- */
 export async function getAllUsers() {
+  const db = getDatabase();
   try {
-    const result = await query(
-      'SELECT id, email, name, avatar_url, created_at, last_login FROM users ORDER BY created_at DESC'
-    );
-
-    return result.rows;
+    return db.prepare('SELECT id, email, name, avatar_url, created_at, last_login FROM users ORDER BY created_at DESC').all();
   } catch (error) {
     console.error('❌ Get all users error:', error.message);
     throw error;
   }
 }
 
-/**
- * Count total users
- * @returns {number} Total user count
- */
 export async function getUserCount() {
+  const db = getDatabase();
   try {
-    const result = await query('SELECT COUNT(*) as count FROM users');
-    return parseInt(result.rows[0].count);
+    const result = db.prepare('SELECT COUNT(*) as count FROM users').get();
+    return result.count;
   } catch (error) {
     console.error('❌ Get user count error:', error.message);
     throw error;

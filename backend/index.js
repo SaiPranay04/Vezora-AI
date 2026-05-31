@@ -40,6 +40,7 @@ import calendarRoutes from './routes/calendar.js';
 import searchRoutes from './routes/search.js';
 import workflowsRoutes from './routes/workflows.js';
 import ocrRoutes from './routes/ocr.js';
+import ttsRoutes from './routes/tts.js';
 
 // NEW: Context-aware memory and task routes
 import structuredMemoryRoutes from './routes/structuredMemory.js';
@@ -54,10 +55,8 @@ import { ensureDataDirectories } from './utils/fileSystem.js';
 import { isOllamaHealthy } from './utils/ollamaClient.js';
 import { isGroqAvailable } from './utils/groqClient.js';
 import { initializeWorkflowEngine } from './services/workflowEngine.js';
+import { initializeReminders } from './services/reminderService.js';
 import { testEncryption } from './utils/encryption.js';
-
-// NEW: PostgreSQL database initialization
-import { initializePool, testConnection } from './config/database.js';
 
 // NEW: Authentication routes
 import authRoutesNew from './routes/authRoutes.js';
@@ -185,14 +184,15 @@ app.use('/api/auth', authRoutesNew);
 app.use('/api/gmail', gmailRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/search', searchRoutes);
-app.use('/api/workflows', workflowsRoutes);
-app.use('/api/ocr', ocrRoutes);
+app.use('/api/workflows', apiLimiter, workflowsRoutes);
+app.use('/api/ocr', apiLimiter, ocrRoutes);
 
 // NEW: Context-aware memory and task management
-app.use('/api/structured-memory', structuredMemoryRoutes);
-app.use('/api/tasks', tasksRoutes);
-app.use('/api/coordinator', coordinatorRoutes);
-app.use('/api/profile', profileRoutes);
+app.use('/api/structured-memory', apiLimiter, structuredMemoryRoutes);
+app.use('/api/tasks', apiLimiter, tasksRoutes);
+app.use('/api/coordinator', apiLimiter, coordinatorRoutes);
+app.use('/api/profile', apiLimiter, profileRoutes);
+app.use('/api/tts', apiLimiter, ttsRoutes);
 
 // Mount auth callback at root level for Google OAuth (matches redirect URI)
 app.use('/auth', authRoutes);
@@ -227,20 +227,9 @@ async function startServer() {
     // Ensure data directories exist
     await ensureDataDirectories();
     
-    // Initialize database (SQLite for legacy features)
+    // Initialize database (SQLite for local features)
     await initializeDatabase();
-    
-    // NEW: Initialize PostgreSQL for multi-user features
-    console.log('🔌 Connecting to PostgreSQL...');
-    initializePool();
-    const dbConnected = await testConnection();
-    if (dbConnected) {
-      console.log('✅ PostgreSQL connected successfully');
-    } else {
-      console.warn('⚠️  WARNING: PostgreSQL connection failed! Multi-user features will not work.');
-      console.warn('   Set DATABASE_URL in .env to enable multi-user authentication.');
-    }
-    
+    console.log('✅ SQLite Local Database initialized successfully');
     // Test encryption
     console.log('🔐 Testing encryption...');
     const encryptionWorking = testEncryption();
@@ -250,6 +239,7 @@ async function startServer() {
     
     // Initialize workflow engine
     await initializeWorkflowEngine();
+    await initializeReminders();
     
     // Start server
     server.listen(PORT, async () => {

@@ -4,9 +4,31 @@ import { motion } from 'framer-motion';
 import { useVoice } from '../hooks/useVoice';
 
 export const SettingsPage = () => {
-    const [theme, setTheme] = useState('dark-glow');
-    const [personality, setPersonality] = useState('friendly');
-    const [language, setLanguage] = useState('en');
+    const [theme, setTheme] = useState(localStorage.getItem('vezora_theme') || 'dark-glow');
+    const [personality, setPersonality] = useState(localStorage.getItem('vezora_voice_tone') || 'friendly');
+    const [language, setLanguage] = useState(localStorage.getItem('vezora_language') || 'en');
+    const [timeFormat, setTimeFormat] = useState(localStorage.getItem('vezora_time_format') || '12h');
+    
+    // Default permissions state
+    const [permissions, setPermissions] = useState(() => {
+        const saved = localStorage.getItem('vezora_permissions');
+        return saved ? JSON.parse(saved) : {
+            'file-system': true,
+            'app-launcher': true,
+            'network': true,
+            'mic': true,
+            'screen': false,
+            'location': false
+        };
+    });
+
+    const togglePermission = (id: string) => {
+        setPermissions(prev => {
+            const next = { ...prev, [id]: !prev[id] };
+            localStorage.setItem('vezora_permissions', JSON.stringify(next));
+            return next;
+        });
+    };
     const { 
         availableVoices, 
         selectedVoice, 
@@ -17,13 +39,9 @@ export const SettingsPage = () => {
         isSpeaking
     } = useVoice();
 
-    // Load saved tone on mount
     useEffect(() => {
-        const savedTone = localStorage.getItem('vezora_voice_tone');
-        if (savedTone) {
-            setPersonality(savedTone);
-        }
-    }, []);
+        document.documentElement.className = theme;
+    }, [theme]);
 
     const testVoice = () => {
         speak("Hello! I'm Vezora, your AI assistant. This is how I sound with the current voice settings.");
@@ -66,7 +84,10 @@ export const SettingsPage = () => {
                                         key={themeOption.id}
                                         whileHover={{ scale: 1.02 }}
                                         whileTap={{ scale: 0.98 }}
-                                        onClick={() => setTheme(themeOption.id)}
+                                        onClick={() => {
+                                            setTheme(themeOption.id);
+                                            localStorage.setItem('vezora_theme', themeOption.id);
+                                        }}
                                         className={`relative p-4 rounded-xl border-2 transition-all ${
                                             theme === themeOption.id 
                                                 ? 'border-primary bg-primary/10 shadow-[0_0_20px_rgba(142,68,255,0.3)]' 
@@ -328,7 +349,10 @@ export const SettingsPage = () => {
                             <label className="text-sm font-medium mb-2 block">Interface Language</label>
                             <select 
                                 value={language}
-                                onChange={(e) => setLanguage(e.target.value)}
+                                onChange={(e) => {
+                                    setLanguage(e.target.value);
+                                    localStorage.setItem('vezora_language', e.target.value);
+                                }}
                                 className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:border-primary transition-colors"
                             >
                                 <option value="en">🇺🇸 English (US)</option>
@@ -345,10 +369,20 @@ export const SettingsPage = () => {
                         <div>
                             <label className="text-sm font-medium mb-2 block">Time Format</label>
                             <div className="flex gap-2">
-                                <button className="flex-1 px-3 py-2 rounded-lg bg-primary/20 border border-primary/30 text-primary text-sm font-medium">
+                                <button 
+                                    onClick={() => {
+                                        setTimeFormat('12h');
+                                        localStorage.setItem('vezora_time_format', '12h');
+                                    }}
+                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${timeFormat === '12h' ? 'bg-primary/20 border border-primary/30 text-primary' : 'bg-white/5 border border-white/10 text-text/60 hover:bg-white/10'}`}>
                                     12-hour
                                 </button>
-                                <button className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-text/60 text-sm hover:bg-white/10">
+                                <button 
+                                    onClick={() => {
+                                        setTimeFormat('24h');
+                                        localStorage.setItem('vezora_time_format', '24h');
+                                    }}
+                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${timeFormat === '24h' ? 'bg-primary/20 border border-primary/30 text-primary' : 'bg-white/5 border border-white/10 text-text/60 hover:bg-white/10'}`}>
                                     24-hour
                                 </button>
                             </div>
@@ -380,24 +414,27 @@ export const SettingsPage = () => {
                     </div>
                     <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
                         {[
-                            { label: 'File System Access', desc: 'Read/Write access to user documents', active: true, color: 'green' },
-                            { label: 'Application Launcher', desc: 'Permission to start external processes', active: true, color: 'green' },
-                            { label: 'Network Access', desc: 'Allow web searches and API calls', active: true, color: 'yellow' },
-                            { label: 'Microphone', desc: 'Voice input and commands', active: true, color: 'green' },
-                            { label: 'Screen Recording', desc: 'Context awareness from screen', active: false, color: 'red' },
-                            { label: 'Location Services', desc: 'Local time and weather data', active: false, color: 'red' },
-                        ].map((perm, i) => (
+                            { id: 'file-system', label: 'File System Access', desc: 'Read/Write access to user documents', color: 'green' },
+                            { id: 'app-launcher', label: 'Application Launcher', desc: 'Permission to start external processes', color: 'green' },
+                            { id: 'network', label: 'Network Access', desc: 'Allow web searches and API calls', color: 'yellow' },
+                            { id: 'mic', label: 'Microphone', desc: 'Voice input and commands', color: 'green' },
+                            { id: 'screen', label: 'Screen Recording', desc: 'Context awareness from screen', color: 'red' },
+                            { id: 'location', label: 'Location Services', desc: 'Local time and weather data', color: 'red' },
+                        ].map((perm, i) => {
+                            const isActive = permissions[perm.id];
+                            return (
                             <motion.div 
                                 key={i}
+                                onClick={() => togglePermission(perm.id)}
                                 initial={{ opacity: 0, scale: 0.9 }}
                                 animate={{ opacity: 1, scale: 1 }}
                                 transition={{ delay: 0.35 + i * 0.05 }}
                                 className="group flex items-start gap-4 p-4 border border-white/5 rounded-xl bg-black/20 hover:bg-black/30 hover:border-white/10 transition-all cursor-pointer"
                             >
-                                <button className={`mt-1 w-12 h-6 ${perm.active ? 'bg-green-500/20' : 'bg-white/10'} rounded-full relative transition-all group-hover:scale-105`}>
+                                <button className={`mt-1 w-12 h-6 ${isActive ? 'bg-green-500/20' : 'bg-white/10'} rounded-full relative transition-all group-hover:scale-105`}>
                                     <motion.div 
                                         className={`absolute top-1 w-4 h-4 rounded-full shadow-lg transition-all ${
-                                            perm.active 
+                                            isActive 
                                                 ? 'bg-green-400 left-6 shadow-green-400/50' 
                                                 : 'bg-white/50 left-1'
                                         }`}
@@ -407,7 +444,7 @@ export const SettingsPage = () => {
                                 <div className="flex-1">
                                     <div className="text-sm font-medium flex items-center gap-2">
                                         {perm.label}
-                                        {perm.active && (
+                                        {isActive && (
                                             <span className="text-[9px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded-full uppercase tracking-wider">
                                                 Enabled
                                             </span>
@@ -416,7 +453,7 @@ export const SettingsPage = () => {
                                     <div className="text-xs text-text/50 leading-tight mt-1">{perm.desc}</div>
                                 </div>
                             </motion.div>
-                        ))}
+                        )})}
                     </div>
                 </motion.div>
 

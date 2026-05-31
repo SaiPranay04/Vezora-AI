@@ -20,7 +20,7 @@ import {
   searchMemories,
   getMemoryStats,
   MEMORY_TYPES
-} from '../services/memoryService.pg.js';
+} from '../services/memoryService.js';
 import { authenticate, optionalAuth, getUserIdFromRequest } from '../middleware/auth.js';
 
 const router = express.Router();

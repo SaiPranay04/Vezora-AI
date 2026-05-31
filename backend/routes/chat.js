@@ -5,10 +5,11 @@
 import express from 'express';
 import axios from 'axios';
 import { generateChatCompletion, parseIntent, isOllamaHealthy, formatMessagesForOllama } from '../utils/ollamaClient.js';
-import { generateGroqCompletion, isGroqAvailable } from '../utils/groqClient.js';
+import { generateGroqCompletion, isGroqAvailable, streamGroqChatCompletion } from '../utils/groqClient.js';
 import { generateGeminiCompletion, parseIntentWithGemini, isGeminiAvailable } from '../utils/geminiClient.js';
 import { getMemory } from '../controllers/memoryController.js';
 import { addLog } from '../controllers/logsController.js';
+import { executeRoutedQuery, determineStreamProvider } from '../core/llmRouter.js';
 import { getSettings } from '../controllers/settingsController.js';
 import { executeAgent } from '../utils/langchainAgent.js';
 import { isAuthenticated } from '../utils/googleAuth.js';
@@ -33,7 +34,8 @@ router.post('/', optionalAuth, async (req, res) => {
       message, 
       messages: conversationHistory, 
       includeMemory = false, 
-      useContext = true // NEW: Enable context-aware responses by default
+      useContext = true,
+      personality = 'friendly'
     } = req.body;
 
     // Get userId from authenticated user
@@ -103,6 +105,7 @@ router.post('/', optionalAuth, async (req, res) => {
           const agentResponse = await executeAgent(lastUserMessage);
           console.log('✅ Agent response:', agentResponse.substring(0, 200));
           const responseTime = Date.now() - startTime;
+      
           
           return res.json({
             id: Date.now().toString(),
@@ -152,7 +155,8 @@ router.post('/', optionalAuth, async (req, res) => {
           userId,
           conversationHistory: conversationHistory || [],
           useContext: true,
-          aiProvider
+          aiProvider,
+          personality
         });
 
         const responseTime = 0;
@@ -197,81 +201,21 @@ router.post('/', optionalAuth, async (req, res) => {
       }
     }
 
-    // Generate response from selected AI provider
-    const startTime = Date.now();
+    // Generate response from selected AI provider via new Router
     let aiResponse;
-    let usedProvider;
-
     try {
-      // PRIMARY: Try Groq first (fastest and best for voice)
-      if (isGroqAvailable()) {
-        console.log('🤖 Using Groq AI');
-        
-        // Convert messages to prompt format
-        const systemPrompt = messages[0]?.role === 'system' ? messages[0].content : 'You are Vezora AI, a helpful and intelligent assistant.';
-        const userMessages = messages.filter(m => m.role !== 'system');
-        const prompt = userMessages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n\n');
-        
-        const groqResponse = await generateGroqCompletion(
-          prompt,
-          systemPrompt,
-          2048,
-          0.7
-        );
-        
-        aiResponse = { response: groqResponse };
-        usedProvider = 'groq';
-      }
-      // FALLBACK 1: Gemini
-      else if (useGemini || isGeminiAvailable()) {
-        console.log('🤖 Using Gemini AI');
-        aiResponse = await generateGeminiCompletion(messages, {
-          temperature: settings.temperature || 0.7,
-          maxTokens: settings.maxTokens || 1024
-        });
-        usedProvider = 'gemini';
-      }
-      // FALLBACK 2: Ollama
-      else {
-        console.log('🤖 Using Ollama');
-        aiResponse = await generateChatCompletion(messages, {
-          temperature: 0.6,
-          maxTokens: 100,
-          tone: settings.voiceTone || 'friendly'
-        });
-        usedProvider = 'ollama';
-      }
+      const options = { temperature: settings.temperature || 0.7 };
+      aiResponse = await executeRoutedQuery(messages, options);
     } catch (error) {
-      // CASCADE FALLBACK
-      console.error(`❌ ${usedProvider} failed, trying fallback...`);
-      
-      try {
-        // Try Gemini fallback
-        if (isGeminiAvailable() && usedProvider !== 'gemini') {
-          console.log('🔄 Falling back to Gemini');
-          aiResponse = await generateGeminiCompletion(messages, {
-            temperature: settings.temperature || 0.7,
-            maxTokens: settings.maxTokens || 1024
-          });
-          usedProvider = 'gemini (fallback)';
-        }
-        // Try Ollama fallback
-        else if (await isOllamaHealthy() && usedProvider !== 'ollama') {
-          console.log('🔄 Falling back to Ollama');
-          aiResponse = await generateChatCompletion(messages, {
-            temperature: settings.temperature || 0.7,
-            maxTokens: settings.maxTokens || 512
-          });
-          usedProvider = 'ollama (fallback)';
-        } else {
-          throw error;
-        }
-      } catch (fallbackError) {
-        throw new Error('All AI providers are currently unavailable');
-      }
+      console.error('❌ Router execution failed:', error);
+      throw new Error('All AI providers are currently unavailable');
     }
+    
+    const responseTime = aiResponse.responseTime;
+    const usedProvider = aiResponse.provider;
+    aiResponse.response = aiResponse.content; // Normalization for intent code below
 
-    const responseTime = Date.now() - startTime;
+
 
     // Parse intent for potential actions
     let intent;
@@ -420,72 +364,108 @@ router.post('/stream', async (req, res) => {
         });
       }
     }
+    // Determine provider for streaming
+    const streamProvider = await determineStreamProvider(messages);
+    console.log(`🤖 Using ${streamProvider.toUpperCase()} (streaming)`);
 
-    // Use Ollama with streaming
-    console.log('🤖 Using Ollama (streaming)');
-    
-    const modelName = process.env.OLLAMA_MODEL_NAME || 'mistral:latest';
-    const prompt = formatMessagesForOllama(messages, settings.voiceTone || 'friendly');
+    if (streamProvider === 'groq') {
+      try {
+        const groqStream = streamGroqChatCompletion(messages, 'You are Zara, a helpful and intelligent local AI assistant.', 2048, 0.7);
+        let buffer = '';
+        let fullResponse = '';
 
-    const response = await axios.post(
-      `${OLLAMA_BASE_URL}/api/generate`,
-      {
-        model: modelName,
-        prompt: prompt,
-        stream: true,
-        options: {
-          temperature: 0.6,
-          top_p: 0.9,
-          num_predict: 100
+        for await (const chunk of groqStream) {
+          buffer += chunk;
+          fullResponse += chunk;
+
+          // Send sentence chunks immediately (ends with . ! ?)
+          const sentenceMatch = buffer.match(/^(.*?[.!?\n])\s*/);
+          if (sentenceMatch) {
+            const sentence = sentenceMatch[1].trim();
+            if (sentence) {
+              res.write(`data: ${JSON.stringify({ type: 'chunk', content: sentence })}\n\n`);
+              buffer = buffer.slice(sentenceMatch[0].length);
+            }
+          }
         }
-      },
-      { responseType: 'stream' }
-    );
 
-    let buffer = '';
-    let fullResponse = '';
-
-    response.data.on('data', (chunk) => {
-      const lines = chunk.toString().split('\n').filter(line => line.trim());
-      
-      for (const line of lines) {
-        try {
-          const json = JSON.parse(line);
-          if (json.response) {
-            buffer += json.response;
-            fullResponse += json.response;
-
-            // Send sentence chunks immediately (ends with . ! ?)
-            const sentenceMatch = buffer.match(/^(.*?[.!?])\s*/);
-            if (sentenceMatch) {
-              const sentence = sentenceMatch[1].trim();
-              if (sentence) {
-                res.write(`data: ${JSON.stringify({ type: 'chunk', content: sentence })}\n\n`);
-                buffer = buffer.slice(sentenceMatch[0].length);
+        // Send any remaining text
+        if (buffer.trim()) {
+          res.write(`data: ${JSON.stringify({ type: 'chunk', content: buffer.trim() })}\n\n`);
+        }
+        // Send done signal
+        res.write(`data: ${JSON.stringify({ type: 'done', fullResponse: fullResponse.trim() })}\n\n`);
+        res.end();
+      } catch (error) {
+        console.error('❌ Groq stream error:', error);
+        res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
+        res.end();
+      }
+    } else {
+      // Use Ollama with streaming
+      const modelName = process.env.OLLAMA_MODEL_NAME || 'mistral:latest';
+      const prompt = formatMessagesForOllama(messages, settings.voiceTone || 'friendly');
+  
+      const response = await axios.post(
+        `${OLLAMA_BASE_URL}/api/generate`,
+        {
+          model: modelName,
+          prompt: prompt,
+          stream: true,
+          options: {
+            temperature: 0.6,
+            top_p: 0.9,
+            num_predict: 100
+          }
+        },
+        { responseType: 'stream' }
+      );
+  
+      let buffer = '';
+      let fullResponse = '';
+  
+      response.data.on('data', (chunk) => {
+        const lines = chunk.toString().split('\n').filter(line => line.trim());
+        
+        for (const line of lines) {
+          try {
+            const json = JSON.parse(line);
+            if (json.response) {
+              buffer += json.response;
+              fullResponse += json.response;
+  
+              // Send sentence chunks immediately (ends with . ! ?)
+              const sentenceMatch = buffer.match(/^(.*?[.!?])\s*/);
+              if (sentenceMatch) {
+                const sentence = sentenceMatch[1].trim();
+                if (sentence) {
+                  res.write(`data: ${JSON.stringify({ type: 'chunk', content: sentence })}\n\n`);
+                  buffer = buffer.slice(sentenceMatch[0].length);
+                }
               }
             }
-          }
-
-          if (json.done) {
-            // Send any remaining text
-            if (buffer.trim()) {
-              res.write(`data: ${JSON.stringify({ type: 'chunk', content: buffer.trim() })}\n\n`);
+  
+            if (json.done) {
+              // Send any remaining text
+              if (buffer.trim()) {
+                res.write(`data: ${JSON.stringify({ type: 'chunk', content: buffer.trim() })}\n\n`);
+              }
+              // Send done signal
+              res.write(`data: ${JSON.stringify({ type: 'done', fullResponse: fullResponse.trim() })}\n\n`);
+              res.end();
             }
-            // Send done signal
-            res.write(`data: ${JSON.stringify({ type: 'done', fullResponse: fullResponse.trim() })}\n\n`);
-            res.end();
+          } catch (e) {
+            // Skip invalid JSON
           }
-        } catch (e) {
-          // Skip invalid JSON
         }
-      }
-    });
-
-    response.data.on('error', (error) => {
-      console.error('❌ Stream error:', error);
-      res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
-      res.end();
-    });
+      });
+  
+      response.data.on('error', (error) => {
+        console.error('❌ Stream error:', error);
+        res.write(`data: ${JSON.stringify({ type: 'error', message: error.message })}\n\n`);
+        res.end();
+      });
+    }
 
   } catch (error) {
     console.error('❌ Streaming error:', error);

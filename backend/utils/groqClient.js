@@ -174,9 +174,61 @@ export async function testGroqConnection() {
   }
 }
 
+/**
+ * Stream chat completion using Groq
+ * @param {Array} messages - Array of message objects
+ * @param {string} systemPrompt - System prompt
+ * @param {number} maxTokens - Max tokens
+ * @param {number} temperature - Temperature
+ * @param {string} model - Model to use
+ * @returns {AsyncGenerator<string>} - Yields generated text chunks
+ */
+export async function* streamGroqChatCompletion(
+  messages,
+  systemPrompt = 'You are Zara, a helpful and intelligent local AI assistant.',
+  maxTokens = 2048,
+  temperature = 0.7,
+  model = null
+) {
+  const groq = getGroqClient();
+  const selectedModel = model || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+
+  console.log(`🤖 [GROQ STREAM] Using model: ${selectedModel}`);
+
+  const formattedMessages = [
+    { role: 'system', content: systemPrompt },
+    ...messages.map(msg => ({
+      role: msg.role,
+      content: msg.content
+    }))
+  ];
+
+  try {
+    const completionStream = await groq.chat.completions.create({
+      model: selectedModel,
+      messages: formattedMessages,
+      max_tokens: maxTokens,
+      temperature,
+      top_p: 1,
+      stream: true
+    });
+
+    for await (const chunk of completionStream) {
+      const content = chunk.choices[0]?.delta?.content;
+      if (content) {
+        yield content;
+      }
+    }
+  } catch (error) {
+    console.error('❌ [GROQ STREAM] Error:', error.message);
+    throw new Error(`Failed to stream Groq response: ${error.message}`);
+  }
+}
+
 export default {
   generateGroqCompletion,
   generateGroqChatCompletion,
+  streamGroqChatCompletion,
   isGroqAvailable,
   testGroqConnection
 };

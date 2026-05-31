@@ -68,6 +68,8 @@ export const ChatPage = () => {
                     content: msg.content
                 }));
 
+            const personalityTone = localStorage.getItem('vezora_voice_tone') || 'friendly';
+
             const response = await fetch(`${BACKEND_URL}/api/chat`, {
                 method: 'POST',
                 headers: { 
@@ -76,7 +78,8 @@ export const ChatPage = () => {
                 },
                 body: JSON.stringify({
                     messages: conversationHistory,
-                    includeMemory: false
+                    includeMemory: false,
+                    personality: personalityTone
                 })
             });
 
@@ -131,6 +134,30 @@ export const ChatPage = () => {
         }
     };
 
+    const handleExtractMemory = async (content: string) => {
+        if (!token) return;
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/structured-memory`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    type: 'USER_PREFERENCE',
+                    key: `manual_extract_${Date.now()}`,
+                    content: content
+                })
+            });
+            if (response.ok) {
+                // Could add a toast notification here
+                console.log('✅ Extracted to Neural Core');
+            }
+        } catch (err) {
+            console.error('Failed to extract memory', err);
+        }
+    };
+
     return (
         <div className="flex h-full w-full relative">
             {/* Chat Sidebar */}
@@ -169,6 +196,7 @@ export const ChatPage = () => {
                     messages={messages.filter(m => m.role !== 'system') as Message[]} 
                     isTyping={isTyping}
                     onReplayMessage={(content) => speak(content)}
+                    onExtractMemory={handleExtractMemory}
                 />
 
                 <div className="sticky bottom-0 w-full z-20">

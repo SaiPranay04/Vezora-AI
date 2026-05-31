@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '../lib/utils';
-import { Bot, User, Volume2 } from 'lucide-react';
+import { Bot, User, Volume2, Brain } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -16,9 +16,10 @@ interface ChatBoxProps {
     messages: Message[];
     isTyping?: boolean;
     onReplayMessage?: (content: string) => void;
+    onExtractMemory?: (content: string) => void;
 }
 
-export const ChatBox = ({ messages, isTyping, onReplayMessage }: ChatBoxProps) => {
+export const ChatBox = ({ messages, isTyping, onReplayMessage, onExtractMemory }: ChatBoxProps) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -95,6 +96,17 @@ export const ChatBox = ({ messages, isTyping, onReplayMessage }: ChatBoxProps) =
                                             title="Replay voice"
                                         >
                                             <Volume2 size={12} className="text-secondary" />
+                                        </motion.button>
+                                    )}
+                                    {onExtractMemory && (
+                                        <motion.button
+                                            whileHover={{ scale: 1.1 }}
+                                            whileTap={{ scale: 0.9 }}
+                                            onClick={() => onExtractMemory(msg.content)}
+                                            className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-white/10"
+                                            title="Extract to Neural Core"
+                                        >
+                                            <Brain size={12} className="text-primary" />
                                         </motion.button>
                                     )}
                                 </div>

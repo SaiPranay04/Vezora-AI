@@ -45,6 +45,12 @@ function App() {
     return () => clearTimeout(timer);
   }, []);
 
+  // Apply theme on mount
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('vezora_theme') || 'dark-glow';
+    document.documentElement.className = savedTheme;
+  }, []);
+
   // Show auth pages if not authenticated
   if (isLoading) {
     return (

@@ -10,14 +10,9 @@ backend/.env.production
 
 # User Data - NEVER COMMIT!
 backend/data/
-backend/data/*.json
-backend/data/google-tokens.json
-backend/data/user-profile.json
-backend/data/memory.json
-backend/data/tasks.json
-backend/data/settings.json
-backend/data/logs.json
-backend/data/workflows.json
+
+# Piper TTS binaries (download separately — see docs)
+backend/bin/piper/
 
 # Database
 *.db
@@ -43,6 +38,7 @@ dist-ssr
 
 # Build outputs
 build/
+.vite/
 .next/
 out/
 .nuxt/
@@ -56,8 +52,11 @@ out/
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
+*.iml
+*.ipr
+*.iws
+.cursor/
 *.suo
 *.ntvs*
 *.njsproj
@@ -82,6 +81,7 @@ temp/
 *.temp
 *.bak
 *.backup
+Untitled*.md
 
 # Certificates and Keys
 *.pem
@@ -101,13 +101,6 @@ coverage/
 htmlcov/
 .pytest_cache/
 .tox/
-
-# IDEs
-.vscode/
-.idea/
-*.iml
-*.ipr
-*.iws
 
 # Package manager
 package-lock.json.bak

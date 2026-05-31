@@ -1,15 +1,5 @@
-/**
- * Memory Service - Structured memory storage for Vezora AI
- * Stores PROJECT_MEMORY, DECISION_MEMORY, and USER_PREFERENCE
- * Does NOT store full conversations, only structured summaries
- */
-
-import fs from 'fs/promises';
-import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-
-const DATA_DIR = process.env.DATA_DIR || './data';
-const MEMORY_DB_FILE = path.join(DATA_DIR, 'structured-memory.json');
+import { getDatabase } from '../utils/database.js';
 
 // Memory types
 export const MEMORY_TYPES = {
@@ -18,286 +8,151 @@ export const MEMORY_TYPES = {
   PREFERENCE: 'USER_PREFERENCE'
 };
 
-// In-memory cache
-let memoryDatabase = {
-  projects: [],
-  decisions: [],
-  preferences: []
-};
+// ==================== GENERIC MEMORY OPERATIONS ====================
 
-/**
- * Load memory database from file
- */
-async function loadMemoryDB() {
-  try {
-    const data = await fs.readFile(MEMORY_DB_FILE, 'utf8');
-    memoryDatabase = JSON.parse(data);
-    console.log('✅ Memory database loaded');
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      // Initialize empty database
-      memoryDatabase = {
-        projects: [],
-        decisions: [],
-        preferences: []
-      };
-      await saveMemoryDB();
-      console.log('✅ Memory database initialized');
-    } else {
-      console.error('❌ Failed to load memory database:', error);
-    }
-  }
-}
-
-/**
- * Save memory database to file
- */
-async function saveMemoryDB() {
-  try {
-    await fs.writeFile(
-      MEMORY_DB_FILE,
-      JSON.stringify(memoryDatabase, null, 2),
-      'utf8'
-    );
-  } catch (error) {
-    console.error('❌ Failed to save memory database:', error);
-    throw error;
-  }
-}
-
-// ==================== PROJECT MEMORY ====================
-
-/**
- * Add or update project memory
- */
-export async function addProject(projectData) {
-  const project = {
-    id: projectData.id || uuidv4(),
-    project_name: projectData.project_name,
-    description: projectData.description,
-    status: projectData.status || 'active', // active, paused, completed
-    priority: projectData.priority || 'medium', // low, medium, high
-    last_updated: new Date().toISOString(),
-    created_at: projectData.created_at || new Date().toISOString()
-  };
-
-  // Check if project already exists
-  const existingIndex = memoryDatabase.projects.findIndex(
-    p => p.project_name.toLowerCase() === project.project_name.toLowerCase()
-  );
-
-  if (existingIndex >= 0) {
-    // Update existing
-    memoryDatabase.projects[existingIndex] = {
-      ...memoryDatabase.projects[existingIndex],
-      ...project
-    };
+export async function addMemory(userId, type, key, content, category = null, importance = 5) {
+  const db = getDatabase();
+  const id = uuidv4();
+  
+  // Generate embedding for semantic search
+  const { generateEmbedding } = await import('../utils/voyageClient.js');
+  const textToEmbed = typeof content === 'string' ? content : JSON.stringify(content);
+  const embeddingArray = await generateEmbedding(textToEmbed);
+  const embeddingStr = embeddingArray ? JSON.stringify(embeddingArray) : null;
+  
+  // Upsert pattern (SQLite REPLACE INTO)
+  // Check if exists
+  const existing = db.prepare('SELECT id FROM memory WHERE user_id = ? AND type = ? AND content LIKE ?').get(userId, type, `%"name":"${key}"%`);
+  
+  if (existing) {
+    db.prepare(`
+      UPDATE memory SET 
+      content = ?, category = ?, importance_score = ?, updated_at = ?, embedding = ?
+      WHERE id = ?
+    `).run(JSON.stringify(content), category, importance, new Date().toISOString(), embeddingStr, existing.id);
+    return { id: existing.id, key, content, category, importance };
   } else {
-    // Add new
-    memoryDatabase.projects.push(project);
+    db.prepare(`
+      INSERT INTO memory (id, user_id, content, type, category, importance_score, metadata, embedding, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, userId, JSON.stringify(content), type, category, importance, 
+      JSON.stringify({ key }), embeddingStr, new Date().toISOString(), new Date().toISOString()
+    );
+    return { id, key, content, category, importance };
   }
-
-  await saveMemoryDB();
-  return project;
 }
 
-/**
- * Get all projects (optionally filtered by status)
- */
-export async function getProjects(status = null) {
-  if (status) {
-    return memoryDatabase.projects.filter(p => p.status === status);
-  }
-  return memoryDatabase.projects;
-}
-
-/**
- * Get project by name or ID
- */
-export async function getProject(identifier) {
-  return memoryDatabase.projects.find(
-    p => p.id === identifier || 
-         p.project_name.toLowerCase() === identifier.toLowerCase()
-  );
-}
-
-/**
- * Update project status
- */
-export async function updateProjectStatus(projectId, status) {
-  const project = memoryDatabase.projects.find(p => p.id === projectId);
-  if (project) {
-    project.status = status;
-    project.last_updated = new Date().toISOString();
-    await saveMemoryDB();
-    return project;
+export async function getMemory(userId, type, key) {
+  const db = getDatabase();
+  const memory = db.prepare(`SELECT * FROM memory WHERE user_id = ? AND type = ? AND metadata LIKE ?`).get(userId, type, `%"key":"${key}"%`);
+  if (memory) {
+    memory.content = JSON.parse(memory.content);
+    return memory;
   }
   return null;
 }
 
-/**
- * Delete project
- */
-export async function deleteProject(projectId) {
-  const initialLength = memoryDatabase.projects.length;
-  memoryDatabase.projects = memoryDatabase.projects.filter(p => p.id !== projectId);
-  
-  if (memoryDatabase.projects.length < initialLength) {
-    await saveMemoryDB();
-    return true;
-  }
-  return false;
+export async function getMemoriesByType(userId, type) {
+  const db = getDatabase();
+  const records = db.prepare(`SELECT * FROM memory WHERE user_id = ? AND type = ? ORDER BY importance_score DESC, updated_at DESC`).all(userId, type);
+  return records.map(r => ({ ...r, content: JSON.parse(r.content) }));
 }
 
-// ==================== DECISION MEMORY ====================
-
-/**
- * Add decision memory
- */
-export async function addDecision(decisionData) {
-  const decision = {
-    id: decisionData.id || uuidv4(),
-    decision_text: decisionData.decision_text,
-    related_project: decisionData.related_project || null,
-    timestamp: new Date().toISOString(),
-    importance_score: decisionData.importance_score || 5, // 1-10 scale
-    context: decisionData.context || ''
-  };
-
-  memoryDatabase.decisions.push(decision);
-
-  // Keep only last 50 decisions to avoid bloat
-  if (memoryDatabase.decisions.length > 50) {
-    memoryDatabase.decisions = memoryDatabase.decisions.slice(-50);
-  }
-
-  await saveMemoryDB();
-  return decision;
+export async function deleteMemory(userId, type, key) {
+  const db = getDatabase();
+  const result = db.prepare(`DELETE FROM memory WHERE user_id = ? AND type = ? AND metadata LIKE ?`).run(userId, type, `%"key":"${key}"%`);
+  return result.changes > 0;
 }
 
-/**
- * Get decisions (optionally by project or importance threshold)
- */
-export async function getDecisions(options = {}) {
-  let decisions = memoryDatabase.decisions;
+// ==================== HELPER FUNCTIONS FOR SPECIFIC MEMORY TYPES ====================
 
-  if (options.project) {
-    decisions = decisions.filter(d => d.related_project === options.project);
-  }
-
-  if (options.minImportance) {
-    decisions = decisions.filter(d => d.importance_score >= options.minImportance);
-  }
-
-  // Sort by timestamp (most recent first)
-  decisions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-
-  if (options.limit) {
-    decisions = decisions.slice(0, options.limit);
-  }
-
-  return decisions;
+export async function addProject(userId, key, content, category = 'general') {
+  return await addMemory(userId, MEMORY_TYPES.PROJECT, key, content, category, 7);
 }
 
-/**
- * Get recent important decisions (last 7 days, importance >= 7)
- */
-export async function getRecentImportantDecisions() {
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-  return memoryDatabase.decisions.filter(d => {
-    const decisionDate = new Date(d.timestamp);
-    return decisionDate >= sevenDaysAgo && d.importance_score >= 7;
-  });
+export async function addDecision(userId, key, content, category = 'general') {
+  return await addMemory(userId, MEMORY_TYPES.DECISION, key, content, category, 8);
 }
 
-// ==================== USER PREFERENCES ====================
+export async function addPreference(userId, key, content, category = 'general') {
+  return await addMemory(userId, MEMORY_TYPES.PREFERENCE, key, content, category, 6);
+}
 
-/**
- * Add or update user preference
- */
-export async function addPreference(preferenceData) {
-  const preference = {
-    id: preferenceData.id || uuidv4(),
-    preference: preferenceData.preference,
-    category: preferenceData.category || 'general', // general, workflow, communication, etc.
-    confidence: preferenceData.confidence || 0.8, // 0-1 confidence score
-    last_updated: new Date().toISOString(),
-    created_at: preferenceData.created_at || new Date().toISOString()
-  };
+export async function getProjects(userId) {
+  return await getMemoriesByType(userId, MEMORY_TYPES.PROJECT);
+}
 
-  // Check if similar preference exists
-  const existingIndex = memoryDatabase.preferences.findIndex(
-    p => p.category === preference.category && 
-         p.preference.toLowerCase().includes(preference.preference.toLowerCase().slice(0, 20))
-  );
+export async function getDecisions(userId) {
+  return await getMemoriesByType(userId, MEMORY_TYPES.DECISION);
+}
 
-  if (existingIndex >= 0) {
-    // Update existing
-    memoryDatabase.preferences[existingIndex] = {
-      ...memoryDatabase.preferences[existingIndex],
-      ...preference
-    };
-  } else {
-    // Add new
-    memoryDatabase.preferences.push(preference);
+export async function getPreferences(userId) {
+  return await getMemoriesByType(userId, MEMORY_TYPES.PREFERENCE);
+}
+
+export async function getMemoryByType(userId, type, key = null) {
+  if (key) {
+    return await getMemory(userId, type, key);
   }
-
-  await saveMemoryDB();
-  return preference;
+  return await getMemoriesByType(userId, type);
 }
 
-/**
- * Get preferences by category
- */
-export async function getPreferences(category = null) {
-  if (category) {
-    return memoryDatabase.preferences.filter(p => p.category === category);
-  }
-  return memoryDatabase.preferences;
+export async function getAllMemories(userId) {
+  const db = getDatabase();
+  const records = db.prepare(`SELECT * FROM memory WHERE user_id = ? ORDER BY type, importance_score DESC, updated_at DESC`).all(userId);
+  return records.map(r => ({ ...r, content: JSON.parse(r.content) }));
 }
 
-/**
- * Delete preference
- */
-export async function deletePreference(preferenceId) {
-  const initialLength = memoryDatabase.preferences.length;
-  memoryDatabase.preferences = memoryDatabase.preferences.filter(p => p.id !== preferenceId);
-  
-  if (memoryDatabase.preferences.length < initialLength) {
-    await saveMemoryDB();
-    return true;
-  }
-  return false;
+export async function searchMemories(userId, keyword) {
+  const db = getDatabase();
+  const records = db.prepare(`
+    SELECT * FROM memory 
+    WHERE user_id = ? 
+    AND (
+      category LIKE ? OR 
+      content LIKE ? OR
+      metadata LIKE ?
+    )
+    ORDER BY importance_score DESC, updated_at DESC
+  `).all(userId, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`);
+  return records.map(r => ({ ...r, content: JSON.parse(r.content) }));
 }
 
-// ==================== UTILITY FUNCTIONS ====================
+export async function getMemoryStats(userId) {
+  const db = getDatabase();
+  const stats = db.prepare(`
+    SELECT 
+      COUNT(*) as total,
+      SUM(CASE WHEN type = 'PROJECT_MEMORY' THEN 1 ELSE 0 END) as projects,
+      SUM(CASE WHEN type = 'DECISION_MEMORY' THEN 1 ELSE 0 END) as decisions,
+      SUM(CASE WHEN type = 'USER_PREFERENCE' THEN 1 ELSE 0 END) as preferences
+    FROM memory 
+    WHERE user_id = ?
+  `).get(userId);
 
-/**
- * Get memory statistics
- */
-export async function getMemoryStats() {
   return {
-    total_projects: memoryDatabase.projects.length,
-    active_projects: memoryDatabase.projects.filter(p => p.status === 'active').length,
-    total_decisions: memoryDatabase.decisions.length,
-    total_preferences: memoryDatabase.preferences.length,
-    high_priority_projects: memoryDatabase.projects.filter(p => p.priority === 'high').length
+    total: stats.total || 0,
+    projects: stats.projects || 0,
+    decisions: stats.decisions || 0,
+    preferences: stats.preferences || 0
   };
 }
 
-/**
- * Clear all memory (use with caution)
- */
-export async function clearAllMemory() {
-  memoryDatabase = {
-    projects: [],
-    decisions: [],
-    preferences: []
-  };
-  await saveMemoryDB();
-}
-
-// Initialize on module load
-loadMemoryDB();
+export default {
+  MEMORY_TYPES,
+  addMemory,
+  getMemory,
+  getMemoriesByType,
+  deleteMemory,
+  addProject,
+  addDecision,
+  addPreference,
+  getProjects,
+  getDecisions,
+  getPreferences,
+  getMemoryByType,
+  getAllMemories,
+  searchMemories,
+  getMemoryStats
+};

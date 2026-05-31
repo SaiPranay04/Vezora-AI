@@ -63,6 +63,24 @@ export const MemoryPage = () => {
         }
     };
 
+    const handleDeleteMemory = async (type: string, key: string) => {
+        if (!token) return;
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/structured-memory/${type}/${key}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            if (response.ok) {
+                // Remove from state
+                setMemories(prev => prev.filter(m => m.id !== key));
+            }
+        } catch (error) {
+            console.error('Failed to delete memory:', error);
+        }
+    };
+
     if (isLoading) {
         return (
             <div className="flex-1 h-full flex items-center justify-center">
@@ -156,6 +174,7 @@ export const MemoryPage = () => {
                                         <motion.button 
                                             whileHover={{ scale: 1.1 }}
                                             whileTap={{ scale: 0.9 }}
+                                            onClick={() => handleDeleteMemory(memory.type || 'USER_PREFERENCE', memory.id || '')}
                                             className="p-1.5 rounded-lg bg-black/50 text-text/40 hover:text-red-400 hover:bg-red-500/20 transition-colors"
                                         >
                                             <Trash2 size={14} />

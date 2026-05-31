@@ -1,13 +1,11 @@
 /**
- * Task Service - Task and deadline management for Vezora AI
- * Manages tasks with status, priority, and deadlines
- * NOW WITH VECTOR EMBEDDINGS for semantic task search
+ * Task Service (SQLite implementation) - Task management with vector embeddings mapped locally
  */
 
-import { query } from '../config/database.js';
+import { getDatabase } from '../utils/database.js';
 import { generateEmbedding } from '../utils/voyageClient.js';
+import { v4 as uuidv4 } from 'uuid';
 
-// Task status and priority enums
 export const TASK_STATUS = {
   PENDING: 'pending',
   IN_PROGRESS: 'in_progress',
@@ -22,379 +20,208 @@ export const TASK_PRIORITY = {
 
 // ==================== CRUD OPERATIONS ====================
 
-/**
- * Add new task
- * @param {string} userId - User ID (required for multi-user)
- * @param {Object} taskData - Task data
- */
 export async function addTask(userId, taskData) {
-  try {
-    // Generate embedding for semantic task search
-    const textToEmbed = `${taskData.title} ${taskData.description || ''}`.trim();
-    const embedding = await generateEmbedding(textToEmbed);
-    const embeddingStr = embedding ? `[${embedding.join(',')}]` : null;
+  const db = getDatabase();
+  const id = uuidv4();
+  
+  const textToEmbed = `${taskData.title} ${taskData.description || ''}`.trim();
+  const embedding = await generateEmbedding(textToEmbed);
+  const embeddingStr = embedding ? JSON.stringify(embedding) : null;
 
-    const result = await query(
-      `INSERT INTO tasks (user_id, title, description, status, priority, category, subcategory, deadline, embedding)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector)
-       RETURNING *`,
-      [
-        userId,
-        taskData.title,
-        taskData.description || '',
-        taskData.status || TASK_STATUS.PENDING,
-        taskData.priority || TASK_PRIORITY.MEDIUM,
-        taskData.category || null,
-        taskData.subcategory || null,
-        taskData.deadline || null,
-        embeddingStr
-      ]
-    );
+  db.prepare(`
+    INSERT INTO tasks (id, user_id, title, description, status, priority, category, subcategory, deadline, embedding, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, userId, taskData.title, taskData.description || '', 
+    taskData.status || TASK_STATUS.PENDING, taskData.priority || TASK_PRIORITY.MEDIUM,
+    taskData.category || null, taskData.subcategory || null, taskData.deadline || null,
+    embeddingStr, new Date().toISOString(), new Date().toISOString()
+  );
 
-    const task = result.rows[0];
-    console.log(`✅ Task added: "${task.title}" [${task.priority}] for user ${userId} ${embedding ? '(with embedding)' : ''}`);
-    return task;
-  } catch (error) {
-    console.error('❌ Add task error:', error.message);
-    throw error;
-  }
+  return await getTask(userId, id);
 }
 
-/**
- * Get task by ID
- * @param {string} userId - User ID
- * @param {string} taskId - Task ID
- */
 export async function getTask(userId, taskId) {
-  try {
-    const result = await query(
-      'SELECT * FROM tasks WHERE id = $1 AND user_id = $2',
-      [taskId, userId]
-    );
-    return result.rows[0] || null;
-  } catch (error) {
-    console.error('❌ Get task error:', error.message);
-    throw error;
-  }
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').get(taskId, userId) || null;
 }
 
-/**
- * Get all tasks (with optional filters)
- * @param {string} userId - User ID
- * @param {Object} filters - Optional filters
- */
 export async function getTasks(userId, filters = {}) {
-  try {
-    let sql = 'SELECT * FROM tasks WHERE user_id = $1';
-    const params = [userId];
-    let paramCount = 2;
+  const db = getDatabase();
+  let sql = 'SELECT * FROM tasks WHERE user_id = ?';
+  const params = [userId];
 
-    // Filter by status
-    if (filters.status) {
-      sql += ` AND status = $${paramCount}`;
-      params.push(filters.status);
-      paramCount++;
-    }
-
-    // Filter by priority
-    if (filters.priority) {
-      sql += ` AND priority = $${paramCount}`;
-      params.push(filters.priority);
-      paramCount++;
-    }
-
-    // Filter by category
-    if (filters.category) {
-      sql += ` AND category = $${paramCount}`;
-      params.push(filters.category);
-      paramCount++;
-    }
-
-    // Sort by priority (high > medium > low) then by deadline
-    sql += ` ORDER BY 
-      CASE priority 
-        WHEN 'high' THEN 3 
-        WHEN 'medium' THEN 2 
-        WHEN 'low' THEN 1 
-      END DESC,
-      deadline ASC NULLS LAST,
-      created_at DESC`;
-
-    const result = await query(sql, params);
-    return result.rows;
-  } catch (error) {
-    console.error('❌ Get tasks error:', error.message);
-    throw error;
+  if (filters.status) {
+    sql += ` AND status = ?`;
+    params.push(filters.status);
   }
+  if (filters.priority) {
+    sql += ` AND priority = ?`;
+    params.push(filters.priority);
+  }
+  if (filters.category) {
+    sql += ` AND category = ?`;
+    params.push(filters.category);
+  }
+
+  sql += ` ORDER BY 
+    CASE priority 
+      WHEN 'high' THEN 3 
+      WHEN 'medium' THEN 2 
+      WHEN 'low' THEN 1 
+    END DESC,
+    deadline ASC,
+    created_at DESC`;
+
+  return db.prepare(sql).all(...params);
 }
 
-/**
- * Update task
- * @param {string} userId - User ID
- * @param {string} taskId - Task ID
- * @param {Object} updates - Fields to update
- */
 export async function updateTask(userId, taskId, updates) {
-  try {
-    const allowedFields = ['title', 'description', 'status', 'priority', 'category', 'subcategory', 'deadline'];
-    const fields = [];
-    const values = [];
-    let paramCount = 1;
+  const db = getDatabase();
+  const allowedFields = ['title', 'description', 'status', 'priority', 'category', 'subcategory', 'deadline'];
+  const fields = [];
+  const values = [];
 
-    Object.keys(updates).forEach((key) => {
-      if (allowedFields.includes(key)) {
-        fields.push(`${key} = $${paramCount}`);
-        values.push(updates[key]);
-        paramCount++;
-      }
-    });
-
-    if (fields.length === 0) {
-      throw new Error('No valid fields to update');
+  Object.keys(updates).forEach((key) => {
+    if (allowedFields.includes(key)) {
+      fields.push(`${key} = ?`);
+      values.push(updates[key]);
     }
+  });
 
-    // Regenerate embedding if title or description changed
-    if (updates.title || updates.description) {
-      // Get current task to build full text
-      const currentTask = await getTask(userId, taskId);
-      if (currentTask) {
-        const newTitle = updates.title || currentTask.title;
-        const newDescription = updates.description !== undefined ? updates.description : currentTask.description;
-        const textToEmbed = `${newTitle} ${newDescription || ''}`.trim();
-        
-        const embedding = await generateEmbedding(textToEmbed);
-        if (embedding) {
-          const embeddingStr = `[${embedding.join(',')}]`;
-          fields.push(`embedding = $${paramCount}::vector`);
-          values.push(embeddingStr);
-          paramCount++;
-        }
+  if (fields.length === 0) return null;
+
+  if (updates.title || updates.description) {
+    const currentTask = await getTask(userId, taskId);
+    if (currentTask) {
+      const newTitle = updates.title || currentTask.title;
+      const newDescription = updates.description !== undefined ? updates.description : currentTask.description;
+      const textToEmbed = `${newTitle} ${newDescription || ''}`.trim();
+      
+      const embedding = await generateEmbedding(textToEmbed);
+      if (embedding) {
+        fields.push(`embedding = ?`);
+        values.push(JSON.stringify(embedding));
       }
     }
-
-    // Add completed_at if status is completed
-    if (updates.status === TASK_STATUS.COMPLETED) {
-      fields.push(`completed_at = NOW()`);
-    }
-
-    values.push(taskId);
-    values.push(userId);
-
-    const result = await query(
-      `UPDATE tasks 
-       SET ${fields.join(', ')}
-       WHERE id = $${paramCount} AND user_id = $${paramCount + 1}
-       RETURNING *`,
-      values
-    );
-
-    if (result.rows.length === 0) {
-      return null;
-    }
-
-    console.log(`✅ Task updated: "${result.rows[0].title}"`);
-    return result.rows[0];
-  } catch (error) {
-    console.error('❌ Update task error:', error.message);
-    throw error;
   }
+
+  if (updates.status === TASK_STATUS.COMPLETED) {
+    fields.push(`completed_at = ?`);
+    values.push(new Date().toISOString());
+  }
+
+  fields.push('updated_at = ?');
+  values.push(new Date().toISOString());
+  
+  values.push(taskId);
+  values.push(userId);
+
+  const result = db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`).run(...values);
+  
+  if (result.changes === 0) return null;
+  return await getTask(userId, taskId);
 }
 
-/**
- * Delete task
- * @param {string} userId - User ID
- * @param {string} taskId - Task ID
- */
 export async function deleteTask(userId, taskId) {
-  try {
-    const result = await query(
-      'DELETE FROM tasks WHERE id = $1 AND user_id = $2 RETURNING id',
-      [taskId, userId]
-    );
-
-    if (result.rows.length > 0) {
-      console.log(`✅ Task deleted: ${taskId}`);
-      return true;
-    }
-    return false;
-  } catch (error) {
-    console.error('❌ Delete task error:', error.message);
-    throw error;
-  }
+  const db = getDatabase();
+  const result = db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').run(taskId, userId);
+  return result.changes > 0;
 }
 
 // ==================== SPECIALIZED QUERIES ====================
 
-/**
- * Get pending tasks
- * @param {string} userId - User ID
- */
 export async function getPendingTasks(userId) {
-  try {
-    const result = await query(
-      'SELECT * FROM tasks WHERE user_id = $1 AND status = $2 ORDER BY priority DESC, deadline ASC',
-      [userId, TASK_STATUS.PENDING]
-    );
-    return result.rows;
-  } catch (error) {
-    console.error('❌ Get pending tasks error:', error.message);
-    throw error;
-  }
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM tasks WHERE user_id = ? AND status = ? ORDER BY priority DESC, deadline ASC').all(userId, TASK_STATUS.PENDING);
 }
 
-/**
- * Get in-progress tasks
- * @param {string} userId - User ID
- */
 export async function getInProgressTasks(userId) {
-  try {
-    const result = await query(
-      'SELECT * FROM tasks WHERE user_id = $1 AND status = $2 ORDER BY priority DESC, deadline ASC',
-      [userId, TASK_STATUS.IN_PROGRESS]
-    );
-    return result.rows;
-  } catch (error) {
-    console.error('❌ Get in-progress tasks error:', error.message);
-    throw error;
-  }
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM tasks WHERE user_id = ? AND status = ? ORDER BY priority DESC, deadline ASC').all(userId, TASK_STATUS.IN_PROGRESS);
 }
 
-/**
- * Get completed tasks
- * @param {string} userId - User ID
- * @param {number} limit - Optional limit
- */
 export async function getCompletedTasks(userId, limit = null) {
-  try {
-    let sql = 'SELECT * FROM tasks WHERE user_id = $1 AND status = $2 ORDER BY completed_at DESC';
-    
-    if (limit) {
-      sql += ` LIMIT ${parseInt(limit)}`;
-    }
-
-    const result = await query(sql, [userId, TASK_STATUS.COMPLETED]);
-    return result.rows;
-  } catch (error) {
-    console.error('❌ Get completed tasks error:', error.message);
-    throw error;
-  }
+  const db = getDatabase();
+  let sql = 'SELECT * FROM tasks WHERE user_id = ? AND status = ? ORDER BY completed_at DESC';
+  if (limit) sql += ` LIMIT ${parseInt(limit)}`;
+  return db.prepare(sql).all(userId, TASK_STATUS.COMPLETED);
 }
 
-/**
- * Get upcoming deadlines (next N days)
- * @param {string} userId - User ID
- * @param {number} days - Number of days to look ahead
- */
 export async function getUpcomingDeadlines(userId, days = 3) {
-  try {
-    const result = await query(
-      `SELECT * FROM tasks 
-       WHERE user_id = $1 
-       AND status != $2 
-       AND deadline IS NOT NULL 
-       AND deadline >= NOW() 
-       AND deadline <= NOW() + INTERVAL '${parseInt(days)} days'
-       ORDER BY deadline ASC`,
-      [userId, TASK_STATUS.COMPLETED]
-    );
-    return result.rows;
-  } catch (error) {
-    console.error('❌ Get upcoming deadlines error:', error.message);
-    throw error;
-  }
+  const db = getDatabase();
+  const futureDate = new Date();
+  futureDate.setDate(futureDate.getDate() + parseInt(days));
+  const isoFuture = futureDate.toISOString();
+  const isoNow = new Date().toISOString();
+
+  return db.prepare(`
+    SELECT * FROM tasks 
+    WHERE user_id = ? 
+    AND status != ? 
+    AND deadline IS NOT NULL 
+    AND deadline >= ? 
+    AND deadline <= ?
+    ORDER BY deadline ASC
+  `).all(userId, TASK_STATUS.COMPLETED, isoNow, isoFuture);
 }
 
-/**
- * Get overdue tasks
- * @param {string} userId - User ID
- */
 export async function getOverdueTasks(userId) {
-  try {
-    const result = await query(
-      `SELECT * FROM tasks 
-       WHERE user_id = $1 
-       AND status != $2 
-       AND deadline IS NOT NULL 
-       AND deadline < NOW()
-       ORDER BY deadline ASC`,
-      [userId, TASK_STATUS.COMPLETED]
-    );
-    return result.rows;
-  } catch (error) {
-    console.error('❌ Get overdue tasks error:', error.message);
-    throw error;
-  }
+  const db = getDatabase();
+  const isoNow = new Date().toISOString();
+  return db.prepare(`
+    SELECT * FROM tasks 
+    WHERE user_id = ? 
+    AND status != ? 
+    AND deadline IS NOT NULL 
+    AND deadline < ?
+    ORDER BY deadline ASC
+  `).all(userId, TASK_STATUS.COMPLETED, isoNow);
 }
 
-/**
- * Get high priority tasks
- * @param {string} userId - User ID
- */
 export async function getHighPriorityTasks(userId) {
-  try {
-    const result = await query(
-      'SELECT * FROM tasks WHERE user_id = $1 AND priority = $2 AND status != $3 ORDER BY deadline ASC',
-      [userId, TASK_PRIORITY.HIGH, TASK_STATUS.COMPLETED]
-    );
-    return result.rows;
-  } catch (error) {
-    console.error('❌ Get high priority tasks error:', error.message);
-    throw error;
-  }
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM tasks WHERE user_id = ? AND priority = ? AND status != ? ORDER BY deadline ASC').all(userId, TASK_PRIORITY.HIGH, TASK_STATUS.COMPLETED);
 }
 
 // ==================== STATISTICS ====================
 
-/**
- * Get task statistics
- * @param {string} userId - User ID
- */
 export async function getTaskStats(userId) {
-  try {
-    const result = await query(
-      `SELECT 
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE status = 'pending') as pending,
-        COUNT(*) FILTER (WHERE status = 'in_progress') as in_progress,
-        COUNT(*) FILTER (WHERE status = 'completed') as completed,
-        COUNT(*) FILTER (WHERE priority = 'high') as high_priority,
-        COUNT(*) FILTER (WHERE status != 'completed' AND deadline < NOW()) as overdue,
-        COUNT(*) FILTER (WHERE status != 'completed' AND deadline >= NOW() AND deadline <= NOW() + INTERVAL '7 days') as upcoming
-       FROM tasks 
-       WHERE user_id = $1`,
-      [userId]
-    );
+  const db = getDatabase();
+  const isoNow = new Date().toISOString();
+  
+  const futureDate = new Date();
+  futureDate.setDate(futureDate.getDate() + 7);
+  const isoFuture = futureDate.toISOString();
 
-    const stats = result.rows[0];
-    return {
-      total: parseInt(stats.total),
-      pending: parseInt(stats.pending),
-      in_progress: parseInt(stats.in_progress),
-      completed: parseInt(stats.completed),
-      high_priority: parseInt(stats.high_priority),
-      overdue: parseInt(stats.overdue),
-      upcoming: parseInt(stats.upcoming)
-    };
-  } catch (error) {
-    console.error('❌ Get task stats error:', error.message);
-    throw error;
-  }
+  const stats = db.prepare(`
+    SELECT 
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+      SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress,
+      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+      SUM(CASE WHEN priority = 'high' THEN 1 ELSE 0 END) as high_priority,
+      SUM(CASE WHEN status != 'completed' AND deadline < ? THEN 1 ELSE 0 END) as overdue,
+      SUM(CASE WHEN status != 'completed' AND deadline >= ? AND deadline <= ? THEN 1 ELSE 0 END) as upcoming
+    FROM tasks 
+    WHERE user_id = ?
+  `).get(isoNow, isoNow, isoFuture, userId);
+
+  return {
+    total: stats.total || 0,
+    pending: stats.pending || 0,
+    in_progress: stats.in_progress || 0,
+    completed: stats.completed || 0,
+    high_priority: stats.high_priority || 0,
+    overdue: stats.overdue || 0,
+    upcoming: stats.upcoming || 0
+  };
 }
 
-/**
- * Complete task (helper function)
- * @param {string} userId - User ID
- * @param {string} taskId - Task ID
- */
 export async function completeTask(userId, taskId) {
   return await updateTask(userId, taskId, { status: TASK_STATUS.COMPLETED });
 }
 
-/**
- * Start task (helper function)
- * @param {string} userId - User ID
- * @param {string} taskId - Task ID
- */
 export async function startTask(userId, taskId) {
   return await updateTask(userId, taskId, { status: TASK_STATUS.IN_PROGRESS });
 }

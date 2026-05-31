@@ -13,12 +13,14 @@
  */
 
 // Using vector-based retrieval for semantic search
-import { getRelevantContext, formatContextForPrompt, getDailySummaryContext } from './retrievalService.vector.js';
-import { addProject, addDecision, addPreference } from './memoryService.pg.js';
+import { getRelevantContext, formatContextForPrompt, getDailySummaryContext } from './retrievalService.js';
+import { addProject, addDecision, addPreference } from './memoryService.js';
 import { addTask, getTasks, updateTask, deleteTask } from './taskService.js';
 import { generateGroqCompletion, isGroqAvailable } from '../utils/groqClient.js';
 import { generateChatCompletion, isOllamaHealthy } from '../utils/ollamaClient.js';
 import { generateGeminiCompletion, isGeminiAvailable } from '../utils/geminiClient.js';
+import { performWebSearch } from './tavilyService.js';
+import { extractUrlMarkdown } from './jinaReaderService.js';
 
 /**
  * Detect if user input needs context retrieval
@@ -87,22 +89,36 @@ User Message: "${userInput}"
 Classify the intent into exactly ONE of these categories:
 
 {
-  "intent": "task_create" | "task_delete" | "task_update" | "task_list" | "general_chat" | "project" | "decision" | "preference" | "greeting",
+  "intent": "task_create" | "task_delete" | "task_update" | "task_list" | "general_chat" | "project" | "decision" | "preference" | "greeting" | "web_research",
   "task_create": { "title": "clean task title", "priority": "low|medium|high", "description": "optional description", "deadline": "ISO date string or null" } | null,
-  "task_delete": { "task_name": "partial name to search for" } | null,
-  "task_update": { "task_name": "partial name to search for", "updates": { "status": "completed|in_progress|pending", "title": "new title or null", "priority": "low|medium|high or null", "deadline": "ISO date or null" } } | null,
-  "task_list": { "filter": "all|pending|in_progress|completed|high_priority|overdue" } | null
+  "task_delete": { "task_name": "core subject keywords of the task" } | null,
+  "task_update": { "task_name": "core subject keywords of the task", "updates": { "status": "completed|in_progress|pending", "title": "new title or null", "priority": "low|medium|high or null", "deadline": "ISO date or null" } } | null,
+  "task_list": { "filter": "all|pending|in_progress|completed|high_priority|overdue" } | null,
+  "web_research": { "query": "core search query string" } | null
 }
 
-RULES:
-- "add task buy groceries" / "remind me to buy milk" / "add buy groceries to my to-do" → intent: "task_create"
-- "delete the grocery task" / "remove buy milk from my to-do" → intent: "task_delete"
-- "mark groceries as done" / "complete the report task" / "update meeting to 6pm" → intent: "task_update"
-- "show my tasks" / "what's on my to-do list" / "list pending tasks" → intent: "task_list"
-- For task_create: Extract ONLY the core task title. Remove command words like "add task", "remind me to", "to my to do"
-- For task_delete/task_update: task_name should be a partial name to fuzzy-match against existing tasks
-- For task_update status: "done"/"finished"/"completed" → "completed", "start"/"working on" → "in_progress", "reset"/"undo" → "pending"
-- If the message is a general question, conversation, or anything non-task → intent: "general_chat"
+CRITICAL RULES FOR task_name EXTRACTION:
+- task_name must contain the CORE SUBJECT/TOPIC keywords that identify the task, NOT command words
+- Strip out words like: "task", "mark", "complete", "delete", "the", "as", "done", "yeah", "please", "update"
+- Keep the meaningful nouns and verbs that describe WHAT the task is about
+- Examples:
+  - "mark the ticket to hyd task as complete" → task_name: "ticket hyd" (NOT "hyd task")
+  - "complete the grocery shopping task" → task_name: "grocery shopping"
+  - "delete the flight booking to patna" → task_name: "flight booking patna"
+  - "yeah the booking ticket to hyd mark as done" → task_name: "booking ticket hyd"
+  - "finish the report writing task" → task_name: "report writing"
+  - "mark train ticket as done" → task_name: "train ticket"
+
+OTHER RULES:
+- "add task buy groceries" / "remind me to buy milk" → intent: "task_create"
+- "delete the grocery task" / "remove buy milk" → intent: "task_delete"
+- "mark groceries as done" / "complete the report" → intent: "task_update"
+- "show my tasks" / "list pending tasks" → intent: "task_list"
+- "research market trends" / "search for the latest news" / "who won the game last night" / "look up latest prices" → intent: "web_research"
+- CRITICAL FOR web_research vs general_chat: If the user asks about their own past data, personal information, decisions, or memories (e.g. "which university was I admitted in?"), do NOT use web_research. Use "general_chat" so the system can retrieve their local memory.
+- For task_create: Extract ONLY the core task title. Remove command words
+- For task_update status: "done"/"finished"/"completed" → "completed", "start"/"working on" → "in_progress"
+- If the message is a general question or conversation without looking something up online → intent: "general_chat"
 - Return ONLY the JSON object, no other text`;
 
     const groqResponse = await generateGroqCompletion(
@@ -243,6 +259,35 @@ async function executeTaskAction(intent, userId) {
         console.log(`📋 [ACTION] Listed ${tasks.length} tasks (filter: ${filter})`);
         break;
       }
+      case 'web_research': {
+        if (!intent.web_research?.query) break;
+        console.log(`🌐 [ACTION] Performing web research for: "${intent.web_research.query}"`);
+        try {
+          const searchData = await performWebSearch(intent.web_research.query, 3);
+          
+          if (searchData.results && searchData.results.length > 0) {
+            const topUrl = searchData.results[0].url;
+            let pageContent = '';
+            try {
+               pageContent = await extractUrlMarkdown(topUrl);
+               // Truncate overly long page reads to save tokens
+               if (pageContent.length > 4000) pageContent = pageContent.substring(0, 4000) + '... (truncated)';
+            } catch(e) {
+               console.log(`⚠️ [JINA] Could not read page text: ${e.message}`);
+               pageContent = "Could not verify full page content.";
+            }
+
+            const sourcesArray = searchData.results.map(r => `[${r.title}](${r.url})`).join(', ');
+            confirmations.push(`Web Research Results for "${intent.web_research.query}":\n\nAI Summary: ${searchData.answer || 'No fast answer provided'}\n\nTop Page Deep Dive: ${pageContent}\n\nSources: ${sourcesArray}`);
+            console.log(`✅ [ACTION] Finished Web Research for: "${intent.web_research.query}"`);
+          } else {
+             confirmations.push(`Web Research: No results found for "${intent.web_research.query}".`);
+          }
+        } catch(e) {
+           confirmations.push(`Web Research failed: ${e.message}`);
+        }
+        break;
+      }
     }
   } catch (error) {
     console.error('❌ [ACTION] Task action error:', error.message);
@@ -260,42 +305,82 @@ function fuzzyMatchTask(tasks, searchName) {
   if (!searchName || !tasks.length) return null;
 
   const search = searchName.toLowerCase().trim();
+  // Remove common filler words from search
+  const fillerWords = new Set(['task', 'the', 'a', 'an', 'my', 'to', 'as', 'is', 'it', 'do', 'for', 'of', 'in', 'on', 'yeah', 'yes', 'please', 'mark', 'complete', 'done', 'delete', 'remove', 'update', 'finish']);
+  const searchWords = search.split(/\s+/).filter(w => w.length > 1 && !fillerWords.has(w));
+  
+  if (searchWords.length === 0) {
+    // If all words were filler, use original search split
+    searchWords.push(...search.split(/\s+/).filter(w => w.length > 1));
+  }
+
   let bestMatch = null;
   let bestScore = 0;
 
   for (const task of tasks) {
     const title = task.title.toLowerCase();
+    const titleWords = title.split(/\s+/).filter(w => w.length > 1);
     let score = 0;
 
     // Exact match
     if (title === search) {
-      return task; // Perfect match, return immediately
+      return task;
     }
 
-    // Title contains search term
+    // Title contains full search term
     if (title.includes(search)) {
-      score = search.length / title.length; // Prefer shorter titles that match
-      score += 0.5; // Bonus for containing
+      score = search.length / title.length;
+      score += 0.6;
     }
 
-    // Search term contains title
+    // Search contains full title
     if (search.includes(title)) {
       score = title.length / search.length;
+      score += 0.4;
+    }
+
+    // Word-level matching (most important for natural language)
+    let matchedWords = 0;
+    let partialMatches = 0;
+    for (const sw of searchWords) {
+      for (const tw of titleWords) {
+        if (tw === sw) {
+          matchedWords += 1.0; // Full word match
+          break;
+        } else if (tw.includes(sw) || sw.includes(tw)) {
+          // Partial match: "hyd" matches "hyderabad", "ticket" matches "tickets"
+          const overlap = Math.min(sw.length, tw.length) / Math.max(sw.length, tw.length);
+          if (overlap >= 0.5) { // At least 50% character overlap
+            partialMatches += overlap;
+            break;
+          }
+        }
+      }
+    }
+
+    // Calculate word match ratio
+    const totalSearchWords = searchWords.length;
+    const wordScore = (matchedWords + partialMatches * 0.8) / totalSearchWords;
+    score += wordScore * 0.8; // Word matching is the primary signal
+
+    // Bonus: if ALL search keywords appear somewhere in the title
+    const allKeywordsPresent = searchWords.every(sw => 
+      titleWords.some(tw => tw.includes(sw) || sw.includes(tw))
+    );
+    if (allKeywordsPresent && searchWords.length >= 2) {
       score += 0.3;
     }
 
-    // Word overlap scoring
-    const searchWords = search.split(/\s+/);
-    const titleWords = title.split(/\s+/);
-    const commonWords = searchWords.filter(w => titleWords.some(tw => tw.includes(w) || w.includes(tw)));
-    if (commonWords.length > 0) {
-      score += (commonWords.length / Math.max(searchWords.length, titleWords.length)) * 0.4;
-    }
+    console.log(`   🔍 Fuzzy: "${search}" vs "${title}" → score: ${score.toFixed(3)} (words: ${matchedWords}/${totalSearchWords}, partial: ${partialMatches.toFixed(1)})`);
 
-    if (score > bestScore && score >= 0.3) { // Minimum threshold
+    if (score > bestScore && score >= 0.15) { // Lower threshold for better recall
       bestScore = score;
       bestMatch = task;
     }
+  }
+
+  if (bestMatch) {
+    console.log(`   ✅ Best match: "${bestMatch.title}" (score: ${bestScore.toFixed(3)})`);
   }
 
   return bestMatch;
@@ -310,7 +395,8 @@ export async function processWithContext(userInput, options = {}) {
     conversationHistory = [],
     useContext = true,
     aiProvider = 'ollama',
-    model = null
+    model = null,
+    personality = 'friendly'
   } = options;
 
   try {
@@ -322,10 +408,10 @@ export async function processWithContext(userInput, options = {}) {
     
     // ==================== STEP 2: EXECUTE TASK ACTIONS ====================
     let actionConfirmations = [];
-    const isTaskAction = ['task_create', 'task_delete', 'task_update', 'task_list'].includes(intent.intent);
+    const isTaskAction = ['task_create', 'task_delete', 'task_update', 'task_list', 'web_research'].includes(intent.intent);
 
     if (isTaskAction && userId) {
-      console.log(`⚡ [COORDINATOR] Executing task action: ${intent.intent}`);
+      console.log(`⚡ [COORDINATOR] Executing action: ${intent.intent}`);
       actionConfirmations = await executeTaskAction(intent, userId);
     }
 
@@ -351,7 +437,7 @@ export async function processWithContext(userInput, options = {}) {
     }
 
     // ==================== STEP 4: BUILD STRUCTURED PROMPT ====================
-    const systemPrompt = buildSystemPrompt(contextText, actionConfirmations);
+    const systemPrompt = buildSystemPrompt(contextText, actionConfirmations, personality);
     
     // For pure task_list responses, we can return the list directly
     // without an LLM call to save latency and cost
@@ -474,10 +560,10 @@ export async function processWithContext(userInput, options = {}) {
 }
 
 /**
- * Build system prompt with context and action confirmations
+ * Build system prompt with context, action confirmations, and tone/personality
  */
-function buildSystemPrompt(contextText, actionConfirmations = []) {
-  let prompt = `You are Vezora AI, an intelligent personal assistant that helps users manage their projects, tasks, and daily activities.
+function buildSystemPrompt(contextText, actionConfirmations = [], personality = 'friendly') {
+  let prompt = `You are Zara (formerly Vezora AI), an intelligent personal assistant that helps users manage their projects, tasks, and daily activities.
 
 You have access to the user's memory, including their active projects, important decisions, pending tasks, and preferences.
 
@@ -486,7 +572,15 @@ IMPORTANT GUIDELINES:
 - Reference relevant context when appropriate
 - Guide the user rather than making autonomous decisions
 - If a task action was just performed, confirm it naturally and briefly
-- Always be helpful and proactive`;
+- Always be helpful and proactive
+
+TONE & PERSONALITY:
+- You are currently set to '${personality}' mode. 
+${personality === 'professional' ? '- Speak formally, professionally, and strictly to the point.' : 
+ personality === 'sassy' ? '- Be confident, witty, slightly sarcastic, and give very short snappy replies.' : 
+ personality === 'calm' ? '- Be extremely slow, soothing, reassuring, and minimalistic.' : 
+ '- Be warm, casual, friendly, and slightly playful.'}
+`;
 
   // Inject action confirmations so the LLM knows what just happened
   if (actionConfirmations.length > 0) {
