@@ -8,9 +8,10 @@ interface InputPanelProps {
     isListening: boolean;
     isSpeaking: boolean;
     onVoiceToggle: () => void;
+    isPassiveMode?: boolean;
 }
 
-export const InputPanel = ({ onSend, isListening, isSpeaking, onVoiceToggle }: InputPanelProps) => {
+export const InputPanel = ({ onSend, isListening, isSpeaking, onVoiceToggle, isPassiveMode = false }: InputPanelProps) => {
     const [input, setInput] = useState('');
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -45,6 +46,7 @@ export const InputPanel = ({ onSend, isListening, isSpeaking, onVoiceToggle }: I
                         isListening={isListening}
                         isSpeaking={isSpeaking}
                         onToggle={onVoiceToggle}
+                        isPassiveMode={isPassiveMode}
                     />
                 </div>
 

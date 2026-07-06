@@ -6,14 +6,17 @@ interface VoiceButtonProps {
     isListening: boolean;
     isSpeaking: boolean;
     onToggle: () => void;
+    isPassiveMode?: boolean;
 }
 
-export const VoiceButton = ({ isListening, isSpeaking, onToggle }: VoiceButtonProps) => {
+export const VoiceButton = ({ isListening, isSpeaking, onToggle, isPassiveMode = false }: VoiceButtonProps) => {
+    const isActivelyListening = isListening && !isPassiveMode;
+
     return (
         <div className="relative flex items-center justify-center">
             {/* Expanding Glow Ring */}
             <AnimatePresence>
-                {(isListening || isSpeaking) && (
+                {(isActivelyListening || isSpeaking) && (
                     <>
                         <motion.div
                             initial={{ opacity: 0, scale: 0.8 }}
@@ -59,13 +62,14 @@ export const VoiceButton = ({ isListening, isSpeaking, onToggle }: VoiceButtonPr
                 onClick={onToggle}
                 className={cn(
                     "relative z-10 flex items-center justify-center w-16 h-16 rounded-full shadow-2xl transition-all duration-300 backdrop-blur-md border-2",
-                    isListening && "bg-gradient-to-br from-primary to-primary/80 text-white border-primary shadow-[0_0_30px_rgba(142,68,255,0.6)]",
+                    isActivelyListening && "bg-gradient-to-br from-primary to-primary/80 text-white border-primary shadow-[0_0_30px_rgba(142,68,255,0.6)]",
                     isSpeaking && "bg-gradient-to-br from-secondary to-secondary/80 text-white border-secondary shadow-[0_0_30px_rgba(94,208,243,0.6)]",
-                    !isListening && !isSpeaking && "bg-bubble-ai/80 text-primary hover:bg-bubble-ai border-white/10 hover:border-primary/30"
+                    isPassiveMode && !isSpeaking && "bg-gradient-to-br from-blue-500/20 to-blue-600/20 text-blue-400 border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.3)]",
+                    !isActivelyListening && !isSpeaking && !isPassiveMode && "bg-bubble-ai/80 text-primary hover:bg-bubble-ai border-white/10 hover:border-primary/30"
                 )}
                 whileHover={{ scale: 1.08 }}
                 whileTap={{ scale: 0.92 }}
-                animate={isListening ? {
+                animate={isActivelyListening ? {
                     boxShadow: [
                         "0 0 20px rgba(142, 68, 255, 0.4)",
                         "0 0 40px rgba(142, 68, 255, 0.6)",
@@ -80,7 +84,7 @@ export const VoiceButton = ({ isListening, isSpeaking, onToggle }: VoiceButtonPr
                 } : {}}
                 transition={{ duration: 1.5, repeat: Infinity }}
             >
-                {isListening ? (
+                {isActivelyListening ? (
                     <motion.div
                         animate={{
                             scale: [1, 1.15, 1],
@@ -122,7 +126,7 @@ export const VoiceButton = ({ isListening, isSpeaking, onToggle }: VoiceButtonPr
             </motion.button>
 
             {/* Idle Pulse Ring (Visible when not active) */}
-            {!isListening && !isSpeaking && (
+            {(!isActivelyListening && !isSpeaking && !isPassiveMode) && (
                 <>
                     <motion.div 
                         className="absolute inset-0 rounded-full border-2 border-primary/20 -z-10"
@@ -147,6 +151,24 @@ export const VoiceButton = ({ isListening, isSpeaking, onToggle }: VoiceButtonPr
                             repeat: Infinity,
                             ease: "easeInOut",
                             delay: 0.5
+                        }}
+                    />
+                </>
+            )}
+
+            {/* Passive Mode Pulse Ring */}
+            {isPassiveMode && !isSpeaking && (
+                <>
+                    <motion.div 
+                        className="absolute inset-0 rounded-full border-2 border-blue-500/30 -z-10"
+                        animate={{
+                            scale: [1, 1.2, 1],
+                            opacity: [0.4, 0.8, 0.4]
+                        }}
+                        transition={{
+                            duration: 4,
+                            repeat: Infinity,
+                            ease: "easeInOut"
                         }}
                     />
                 </>

@@ -8,6 +8,7 @@ export const SettingsPage = () => {
     const [personality, setPersonality] = useState(localStorage.getItem('vezora_voice_tone') || 'friendly');
     const [language, setLanguage] = useState(localStorage.getItem('vezora_language') || 'en');
     const [timeFormat, setTimeFormat] = useState(localStorage.getItem('vezora_time_format') || '12h');
+    const [wakeWordEnabled, setWakeWordEnabled] = useState(localStorage.getItem('vezora_wake_word_enabled') === 'true');
     
     // Default permissions state
     const [permissions, setPermissions] = useState(() => {
@@ -23,7 +24,7 @@ export const SettingsPage = () => {
     });
 
     const togglePermission = (id: string) => {
-        setPermissions(prev => {
+        setPermissions((prev: Record<string, boolean>) => {
             const next = { ...prev, [id]: !prev[id] };
             localStorage.setItem('vezora_permissions', JSON.stringify(next));
             return next;
@@ -327,6 +328,23 @@ export const SettingsPage = () => {
                             </div>
                             <button className="w-12 h-6 bg-secondary/20 rounded-full relative transition-colors hover:bg-secondary/30">
                                 <div className="absolute right-1 top-1 w-4 h-4 bg-secondary rounded-full shadow-sm shadow-secondary/50 transition-all" />
+                            </button>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-4 border-t border-white/5">
+                            <div>
+                                <div className="text-sm font-medium text-secondary">Wake Word Detection</div>
+                                <div className="text-xs text-text/50">Say "Hey Zara" to listen passively</div>
+                            </div>
+                            <button 
+                                onClick={() => {
+                                    const next = !wakeWordEnabled;
+                                    setWakeWordEnabled(next);
+                                    localStorage.setItem('vezora_wake_word_enabled', String(next));
+                                }}
+                                className={`w-12 h-6 rounded-full relative transition-colors ${wakeWordEnabled ? 'bg-secondary/20 hover:bg-secondary/30' : 'bg-white/10 hover:bg-white/20'}`}
+                            >
+                                <div className={`absolute top-1 w-4 h-4 rounded-full shadow-sm transition-all ${wakeWordEnabled ? 'right-1 bg-secondary shadow-secondary/50' : 'left-1 bg-white/50'}`} />
                             </button>
                         </div>
                     </div>

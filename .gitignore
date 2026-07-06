@@ -111,3 +111,14 @@ pnpm-lock.yaml.bak
 .vercel
 .turbo
 .eslintcache
+
+# Electron and Packaging
+release/
+dist_electron/
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.msi
+*.nupkg

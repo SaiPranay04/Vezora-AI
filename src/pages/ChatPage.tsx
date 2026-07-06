@@ -27,18 +27,70 @@ export const ChatPage = () => {
     } = useChats();
 
     const [isTyping, setIsTyping] = useState(false);
+    const [voiceModeActive, setVoiceModeActive] = useState(false);
+    const [isPassiveListening, setIsPassiveListening] = useState(false);
     const lastProcessedTranscript = useRef<string>('');
 
     // Get messages from active chat
     const messages = activeChat?.messages || [];
 
-    // Auto-send when transcript is final — with debounce to prevent double-firing
+    // Initialize Wake Word mode on mount
+    useEffect(() => {
+        const wakeEnabled = localStorage.getItem('vezora_wake_word_enabled') === 'true';
+        if (wakeEnabled) {
+            setVoiceModeActive(true);
+            setIsPassiveListening(true);
+            startListening();
+        }
+    }, [startListening]);
+
+    // Process transcript with Wake Word detection
     useEffect(() => {
         if (transcript && transcript !== lastProcessedTranscript.current) {
             lastProcessedTranscript.current = transcript;
-            handleSend(transcript);
+            
+            if (isPassiveListening) {
+                const wakeWordRegex = /\b(hey zara|zara|vezora|hey vezora)\b/i;
+                const match = transcript.match(wakeWordRegex);
+                
+                if (match) {
+                    console.log('✨ Wake word detected!');
+                    // Extract command after wake word
+                    const command = transcript.substring(match.index! + match[0].length).trim();
+                    
+                    if (command.length > 2) {
+                        handleSend(command);
+                    } else {
+                        // Just the wake word was said. Switch to active listening for the next phrase.
+                        setIsPassiveListening(false);
+                        setTranscript('');
+                        lastProcessedTranscript.current = '';
+                    }
+                } else {
+                    // Ignore irrelevant speech
+                    setTranscript('');
+                    lastProcessedTranscript.current = '';
+                }
+            } else {
+                handleSend(transcript);
+                // Return to passive mode after sending, if enabled
+                if (localStorage.getItem('vezora_wake_word_enabled') === 'true') {
+                    setIsPassiveListening(true);
+                }
+            }
         }
-    }, [transcript]);
+    }, [transcript, isPassiveListening]);
+
+    // Auto-restart microphone for continuous hands-free conversation
+    useEffect(() => {
+        if (voiceModeActive && !isSpeaking && !isTyping && !isListening) {
+            // Add a small delay so the mic doesn't catch the tail end of the TTS
+            const timer = setTimeout(() => {
+                startListening();
+            }, 500);
+            return () => clearTimeout(timer);
+        }
+    }, [voiceModeActive, isSpeaking, isTyping, isListening, startListening]);
 
     const handleSend = async (text: string) => {
         if (!text.trim()) return;
@@ -127,10 +179,14 @@ export const ChatPage = () => {
     };
 
     const toggleVoice = () => {
-        if (isListening) {
+        if (isListening || voiceModeActive) {
             stopListening();
+            setVoiceModeActive(false);
+            setIsPassiveListening(false);
         } else {
             startListening();
+            setVoiceModeActive(true);
+            setIsPassiveListening(false); // Manual click bypasses wake word
         }
     };
 
@@ -202,9 +258,10 @@ export const ChatPage = () => {
                 <div className="sticky bottom-0 w-full z-20">
                     <InputPanel
                         onSend={handleSend}
-                        isListening={isListening}
+                        isListening={isListening || voiceModeActive}
                         isSpeaking={isSpeaking}
                         onVoiceToggle={toggleVoice}
+                        isPassiveMode={isPassiveListening}
                     />
                 </div>
             </div>
