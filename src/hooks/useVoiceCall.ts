@@ -29,52 +29,96 @@ export function useVoiceCall(): UseVoiceCallReturn {
   const [isMuted, setIsMuted] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const { 
-    isListening, 
-    isSpeaking, 
+  const {
+    isListening,
+    isSpeaking,
     transcript: voiceTranscript,
-    startListening, 
-    stopListening, 
-    speak, 
+    startListening,
+    stopListening,
+    speak,
     cancelSpeech,
     setTranscript: clearVoiceTranscript
   } = useVoice();
-  
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastProcessedTranscript = useRef<string>('');
+  const isMutedRef = useRef(false);
+  const isVoiceCallActiveRef = useRef(false);
+  const isProcessingRef = useRef(false);
+  const muteLockRef = useRef(false);
+  const processingWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  /**
-   * Watch for new transcript and process it
-   */
   useEffect(() => {
-    if (!isVoiceCallActive || !voiceTranscript || isProcessing) return;
-    if (voiceTranscript === lastProcessedTranscript.current) return;
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
 
-    lastProcessedTranscript.current = voiceTranscript;
-    setDisplayTranscript(voiceTranscript);
-    handleSpeechRecognized(voiceTranscript);
-  }, [voiceTranscript, isVoiceCallActive, isProcessing]);
+  useEffect(() => {
+    isVoiceCallActiveRef.current = isVoiceCallActive;
+  }, [isVoiceCallActive]);
 
-  /**
-   * Handle recognized speech — send to backend and speak response
-   */
-  const handleSpeechRecognized = useCallback(async (recognizedText: string) => {
-    if (!recognizedText.trim()) return;
-    
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
+
+  const clearWatchdog = () => {
+    if (processingWatchdogRef.current) {
+      clearTimeout(processingWatchdogRef.current);
+      processingWatchdogRef.current = null;
+    }
+  };
+
+  const stopTtsAudio = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current.pause();
+      audioRef.current.src = '';
+      audioRef.current = null;
+    }
+    cancelSpeech();
+  }, [cancelSpeech]);
+
+  const finishProcessing = useCallback(() => {
+    clearWatchdog();
+    isProcessingRef.current = false;
+    setIsProcessing(false);
+    clearVoiceTranscript('');
+    lastProcessedTranscript.current = '';
+
+    if (isVoiceCallActiveRef.current && !isMutedRef.current) {
+      startListening();
+    }
+  }, [clearVoiceTranscript, startListening]);
+
+  const beginProcessing = useCallback(() => {
+    isProcessingRef.current = true;
     setIsProcessing(true);
-    stopListening(); // Stop listening while processing
-    setResponse(''); // Clear previous response
+    stopListening(); // critical: stop mic loop so we don't eat TTS / skip replies
+    clearWatchdog();
+    // Never stay stuck "processing" forever
+    processingWatchdogRef.current = setTimeout(() => {
+      console.warn('Voice call processing watchdog fired');
+      finishProcessing();
+    }, 45000);
+  }, [stopListening, finishProcessing]);
+
+  const handleSpeechRecognized = useCallback(async (recognizedText: string) => {
+    const text = recognizedText.trim();
+    if (!text || isMutedRef.current || isProcessingRef.current) return;
+    if (!isVoiceCallActiveRef.current) return;
+
+    beginProcessing();
+    setResponse('');
 
     try {
-      // Use main /api/chat endpoint (includes coordinator + task creation)
       const fetchResponse = await fetch(`${BACKEND_URL}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
         },
         body: JSON.stringify({
-          messages: [{ role: 'user', content: recognizedText }],
+          messages: [{ role: 'user', content: text }],
           useContext: true,
           includeMemory: false
         })
@@ -85,157 +129,162 @@ export function useVoiceCall(): UseVoiceCallReturn {
       }
 
       const data = await fetchResponse.json();
-      
-      // Build the display response — include task action confirmations
+
       let fullResponse = data.content || '';
-      if (data.actionConfirmations && data.actionConfirmations.length > 0 && data.taskAction) {
+      if (data.actionConfirmations?.length > 0 && data.taskAction) {
         const confirmationText = data.actionConfirmations.join('\n');
         if (!fullResponse.includes('✅') && !fullResponse.includes('📋')) {
           fullResponse = confirmationText + '\n\n' + fullResponse;
         }
       }
-      
-      setResponse(fullResponse);
 
-      // Speak the response via Local Piper TTS Engine
-      if (!isMuted && data.content) {
+      setResponse(fullResponse || 'Done.');
+
+      const speakText = data.content || fullResponse;
+      if (speakText) {
+        let playedPiper = false;
         try {
           const ttsResponse = await fetch(`${BACKEND_URL}/api/tts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: data.content })
+            body: JSON.stringify({ text: speakText })
           });
 
           if (ttsResponse.ok) {
             const audioBlob = await ttsResponse.blob();
             const audioUrl = URL.createObjectURL(audioBlob);
-            
-            if (audioRef.current) {
-              audioRef.current.pause();
-              audioRef.current.src = audioUrl;
-            } else {
-              audioRef.current = new Audio(audioUrl);
-            }
-            
-            audioRef.current.play();
+            stopTtsAudio();
+            const audio = new Audio(audioUrl);
+            audioRef.current = audio;
 
-            audioRef.current.onended = () => {
-              setIsProcessing(false);
-              if (isVoiceCallActive) {
-                clearVoiceTranscript('');
-                lastProcessedTranscript.current = '';
-                startListening();
-              }
-            };
-            return; // Skip the generic setTimeout fallback
+            await new Promise<void>((resolve) => {
+              const done = () => {
+                URL.revokeObjectURL(audioUrl);
+                resolve();
+              };
+              audio.onended = done;
+              audio.onerror = done;
+              audio.play().catch(done);
+            });
+            playedPiper = true;
           }
         } catch (ttsError) {
           console.error('TTS Streaming error:', ttsError);
-          // Fallback to local browser TTS if Piper fails
-          speak(data.content);
+        }
+
+        if (!playedPiper) {
+          await speak(speakText);
         }
       }
-
-      // Restart listening after speech completes (Fallback if muted or TTS skipped)
-      setTimeout(() => {
-        setIsProcessing(false);
-        if (isVoiceCallActive) {
-          clearVoiceTranscript('');
-          lastProcessedTranscript.current = '';
-          startListening();
-        }
-      }, 1500);
-      
     } catch (error) {
       console.error('Voice call error:', error);
-      
       setResponse('Sorry, I encountered an error. Please try again.');
-      if (!isMuted) speak('Sorry, I encountered an error. Please try again.');
-
-      setIsProcessing(false);
-      
-      // Retry listening after error
-      setTimeout(() => {
-        if (isVoiceCallActive) {
-          clearVoiceTranscript('');
-          lastProcessedTranscript.current = '';
-          startListening();
-        }
-      }, 2000);
+      try {
+        await speak('Sorry, I encountered an error. Please try again.');
+      } catch {
+        /* ignore */
+      }
+    } finally {
+      finishProcessing();
     }
-  }, [isMuted, isVoiceCallActive, speak, stopListening, startListening, clearVoiceTranscript, token]);
+  }, [token, speak, beginProcessing, finishProcessing, stopTtsAudio]);
 
-  /**
-   * Start voice call mode
-   */
+  useEffect(() => {
+    if (!isVoiceCallActive || isMuted || isProcessing) return;
+    if (!voiceTranscript?.trim()) return;
+    if (voiceTranscript === lastProcessedTranscript.current) return;
+
+    lastProcessedTranscript.current = voiceTranscript;
+    setDisplayTranscript(voiceTranscript);
+    handleSpeechRecognized(voiceTranscript);
+  }, [voiceTranscript, isVoiceCallActive, isMuted, isProcessing, handleSpeechRecognized]);
+
   const startVoiceCall = useCallback(() => {
+    clearWatchdog();
     setIsVoiceCallActive(true);
-    setDisplayTranscript('');
-    setResponse('');
-    lastProcessedTranscript.current = '';
-    clearVoiceTranscript('');
-    // Auto-start listening
-    startListening();
-  }, [startListening, clearVoiceTranscript]);
-
-  /**
-   * End voice call mode
-   */
-  const endVoiceCall = useCallback(() => {
-    setIsVoiceCallActive(false);
-    stopListening();
-    cancelSpeech();
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
+    isVoiceCallActiveRef.current = true;
+    setIsMuted(false);
+    isMutedRef.current = false;
     setDisplayTranscript('');
     setResponse('');
     setIsProcessing(false);
+    isProcessingRef.current = false;
     lastProcessedTranscript.current = '';
     clearVoiceTranscript('');
-  }, [stopListening, cancelSpeech, clearVoiceTranscript]);
+    startListening();
+  }, [startListening, clearVoiceTranscript]);
 
-  /**
-   * Toggle mute
-   */
+  const endVoiceCall = useCallback(() => {
+    clearWatchdog();
+    setIsVoiceCallActive(false);
+    isVoiceCallActiveRef.current = false;
+    stopListening();
+    stopTtsAudio();
+    setDisplayTranscript('');
+    setResponse('');
+    setIsProcessing(false);
+    isProcessingRef.current = false;
+    setIsMuted(false);
+    isMutedRef.current = false;
+    lastProcessedTranscript.current = '';
+    clearVoiceTranscript('');
+  }, [stopListening, stopTtsAudio, clearVoiceTranscript]);
+
   const toggleMute = useCallback(() => {
-    setIsMuted(prev => {
-      const newMuted = !prev;
-      if (newMuted) {
-        cancelSpeech();
-        if (audioRef.current) {
-          audioRef.current.pause();
-        }
-      }
-      return newMuted;
-    });
-  }, [cancelSpeech]);
+    if (muteLockRef.current) return;
+    muteLockRef.current = true;
+    setTimeout(() => {
+      muteLockRef.current = false;
+    }, 300);
 
-  /**
-   * Toggle listening
-   */
+    const nextMuted = !isMutedRef.current;
+    isMutedRef.current = nextMuted;
+    setIsMuted(nextMuted);
+
+    if (nextMuted) {
+      stopListening();
+      clearWatchdog();
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+    } else if (isVoiceCallActiveRef.current) {
+      clearWatchdog();
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+      clearVoiceTranscript('');
+      lastProcessedTranscript.current = '';
+      startListening();
+    }
+  }, [stopListening, startListening, clearVoiceTranscript]);
+
   const toggleListen = useCallback(() => {
-    if (isListening) {
+    if (isMutedRef.current) {
+      isMutedRef.current = false;
+      setIsMuted(false);
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+      clearVoiceTranscript('');
+      lastProcessedTranscript.current = '';
+      startListening();
+      return;
+    }
+
+    if (isListening || isProcessingRef.current) {
       stopListening();
     } else {
-      if (!isProcessing) {
-        startListening();
-      }
+      startListening();
     }
-  }, [isListening, isProcessing, startListening, stopListening]);
+  }, [isListening, startListening, stopListening, clearVoiceTranscript]);
 
   return {
     isVoiceCallActive,
     transcript: displayTranscript,
     response,
     isMuted,
-    isListening,
-    isSpeaking,
+    isListening: isVoiceCallActive && !isMuted && !isProcessing && isListening,
+    isSpeaking: isSpeaking || isProcessing,
     startVoiceCall,
     endVoiceCall,
     toggleMute,
     toggleListen
   };
 }
-

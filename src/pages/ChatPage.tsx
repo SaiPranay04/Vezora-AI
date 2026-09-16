@@ -3,17 +3,19 @@ import { ChatBox, type Message } from '../components/ChatBox';
 import { InputPanel } from '../components/InputPanel';
 import { AppShortcuts } from '../components/AppShortcuts';
 import { ChatSidebar } from '../components/ChatSidebar';
+import { ConfirmModal } from '../components/ConfirmModal';
 import { useVoice } from '../hooks/useVoice';
 import { useChats } from '../hooks/useChats';
 import { useAuth } from '../contexts/AuthContext';
+import { useAppContext } from '../contexts/AppContext';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 export const ChatPage = () => {
     const { token } = useAuth();
+    const { getContextPayload, setConversationId, pushAction, contextLabel, voiceCallActive } = useAppContext();
     const { isListening, isSpeaking, transcript, startListening, stopListening, speak, setTranscript } = useVoice();
-    
-    // Use chat sessions hook
+
     const {
         sessions,
         activeChat,
@@ -29,73 +31,99 @@ export const ChatPage = () => {
     const [isTyping, setIsTyping] = useState(false);
     const [voiceModeActive, setVoiceModeActive] = useState(false);
     const [isPassiveListening, setIsPassiveListening] = useState(false);
+    const [pendingConfirm, setPendingConfirm] = useState<{ pendingId: string; preview: string } | null>(null);
     const lastProcessedTranscript = useRef<string>('');
+    const voiceModeActiveRef = useRef(false);
 
-    // Get messages from active chat
     const messages = activeChat?.messages || [];
 
-    // Initialize Wake Word mode on mount
+    useEffect(() => {
+        voiceModeActiveRef.current = voiceModeActive;
+    }, [voiceModeActive]);
+
+    useEffect(() => {
+        if (activeChatId) setConversationId(activeChatId);
+    }, [activeChatId, setConversationId]);
+
+    // Voice Call owns the mic — pause chat voice while it's open
+    useEffect(() => {
+        if (voiceCallActive) {
+            stopListening();
+        } else if (voiceModeActiveRef.current) {
+            startListening();
+        }
+    }, [voiceCallActive, stopListening, startListening]);
+
     useEffect(() => {
         const wakeEnabled = localStorage.getItem('vezora_wake_word_enabled') === 'true';
-        if (wakeEnabled) {
+        if (wakeEnabled && !voiceCallActive) {
             setVoiceModeActive(true);
             setIsPassiveListening(true);
             startListening();
         }
-    }, [startListening]);
+    }, [startListening, voiceCallActive]);
 
-    // Process transcript with Wake Word detection
     useEffect(() => {
-        if (transcript && transcript !== lastProcessedTranscript.current) {
-            lastProcessedTranscript.current = transcript;
-            
-            if (isPassiveListening) {
-                const wakeWordRegex = /\b(hey zara|zara|vezora|hey vezora)\b/i;
-                const match = transcript.match(wakeWordRegex);
-                
-                if (match) {
-                    console.log('✨ Wake word detected!');
-                    // Extract command after wake word
-                    const command = transcript.substring(match.index! + match[0].length).trim();
-                    
-                    if (command.length > 2) {
-                        handleSend(command);
-                    } else {
-                        // Just the wake word was said. Switch to active listening for the next phrase.
-                        setIsPassiveListening(false);
-                        setTranscript('');
-                        lastProcessedTranscript.current = '';
-                    }
+        if (!transcript || transcript === lastProcessedTranscript.current) return;
+        if (voiceCallActive) return;
+
+        lastProcessedTranscript.current = transcript;
+        const spoken = transcript;
+
+        if (isPassiveListening) {
+            const wakeWordRegex = /\b(hey zara|zara|vezora|hey vezora)\b/i;
+            const match = spoken.match(wakeWordRegex);
+
+            if (match) {
+                const command = spoken.substring(match.index! + match[0].length).trim();
+                if (command.length > 2) {
+                    // Stay in active listen mode for the conversation turn
+                    setIsPassiveListening(false);
+                    handleSend(command);
                 } else {
-                    // Ignore irrelevant speech
+                    setIsPassiveListening(false);
                     setTranscript('');
                     lastProcessedTranscript.current = '';
                 }
             } else {
-                handleSend(transcript);
-                // Return to passive mode after sending, if enabled
-                if (localStorage.getItem('vezora_wake_word_enabled') === 'true') {
-                    setIsPassiveListening(true);
-                }
+                // Wake-word mode: ignore chatter without the wake word
+                setTranscript('');
+                lastProcessedTranscript.current = '';
             }
+        } else if (voiceModeActive) {
+            handleSend(spoken);
         }
-    }, [transcript, isPassiveListening]);
+    }, [transcript, isPassiveListening, voiceModeActive, voiceCallActive]);
 
-    // Auto-restart microphone for continuous hands-free conversation
     useEffect(() => {
-        if (voiceModeActive && !isSpeaking && !isTyping && !isListening) {
-            // Add a small delay so the mic doesn't catch the tail end of the TTS
-            const timer = setTimeout(() => {
-                startListening();
-            }, 500);
-            return () => clearTimeout(timer);
+        if (voiceCallActive || !voiceModeActive || isSpeaking || isTyping || isListening || isPassiveListening) return;
+        const timer = setTimeout(() => {
+            if (voiceModeActiveRef.current && !voiceCallActive) startListening();
+        }, 400);
+        return () => clearTimeout(timer);
+    }, [voiceModeActive, isSpeaking, isTyping, isListening, isPassiveListening, startListening, voiceCallActive]);
+
+    // Toggle ONLY on voiceModeActive — using isListening caused "unmute flips to mute"
+    const toggleVoice = () => {
+        if (voiceCallActive) return;
+        if (voiceModeActive) {
+            stopListening();
+            setVoiceModeActive(false);
+            setIsPassiveListening(false);
+        } else {
+            setVoiceModeActive(true);
+            // Manual mic = active conversation mode (not wake-word gate)
+            setIsPassiveListening(false);
+            startListening();
         }
-    }, [voiceModeActive, isSpeaking, isTyping, isListening, startListening]);
+    };
 
     const handleSend = async (text: string) => {
         if (!text.trim()) return;
 
-        // Add User Message
+        // Pause mic while we think / talk — otherwise it "just keeps listening"
+        stopListening();
+
         const newUserMsg: Message = {
             id: Date.now().toString(),
             role: 'user',
@@ -104,14 +132,13 @@ export const ChatPage = () => {
         };
         const updatedMessages = [...messages, newUserMsg];
         updateMessages(updatedMessages);
-        setTranscript(''); // Clear for next turn
+        setTranscript('');
         lastProcessedTranscript.current = '';
+        pushAction(`chat:${text.slice(0, 40)}`);
 
-        // Get AI Response from backend WITH CONVERSATION CONTEXT
         setIsTyping(true);
-        
+
         try {
-            // Build conversation history (last 10 messages for context)
             const conversationHistory = updatedMessages
                 .filter(msg => msg.role !== 'system')
                 .slice(-10)
@@ -124,14 +151,15 @@ export const ChatPage = () => {
 
             const response = await fetch(`${BACKEND_URL}/api/chat`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({
                     messages: conversationHistory,
                     includeMemory: false,
-                    personality: personalityTone
+                    personality: personalityTone,
+                    context: getContextPayload()
                 })
             });
 
@@ -140,53 +168,94 @@ export const ChatPage = () => {
             }
 
             const data = await response.json();
-            
             setIsTyping(false);
 
-            // Build response content — include task action confirmations if present
             let responseContent = data.content;
             if (data.actionConfirmations && data.actionConfirmations.length > 0 && data.taskAction) {
-                // If the LLM response doesn't already include the confirmation, prepend it
                 const confirmationText = data.actionConfirmations.join('\n');
                 if (!responseContent.includes('✅') && !responseContent.includes('📋')) {
                     responseContent = confirmationText + '\n\n' + responseContent;
                 }
             }
 
+            if (data.requiresConfirmation && data.pendingId) {
+                setPendingConfirm({
+                    pendingId: data.pendingId,
+                    preview: data.tools?.[0]?.preview || data.content
+                });
+            }
+
             const newAiMsg: Message = {
                 id: data.id || (Date.now() + 1).toString(),
                 role: 'assistant',
                 content: responseContent,
-                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                provider: data.provider,
+                model: data.model,
+                tools: data.tools
             };
             updateMessages([...updatedMessages, newAiMsg]);
 
-            // Speak the response (use original content for cleaner TTS)
-            speak(data.content);
-
+            if (!data.requiresConfirmation && data.content) {
+                await speak(data.content);
+            }
         } catch (error) {
             console.error('❌ Chat error:', error);
             setIsTyping(false);
-            
+
             const errorMsg: Message = {
                 id: (Date.now() + 1).toString(),
                 role: 'assistant',
-                content: `❌ **Connection Error**\n\nI couldn't reach the backend server. Please check:\n\n1. Backend is running: \`cd backend && npm run dev\`\n2. Backend URL: \`${BACKEND_URL}\`\n3. Ollama is running (if using local AI)\n4. Or Gemini API key is set (in backend/.env)`,
+                content: `❌ **Connection Error**\n\nI couldn't reach the backend server. Please check:\n\n1. Backend is running: \`cd backend && npm run dev\`\n2. Backend URL: \`${BACKEND_URL}\`\n3. Ollama is running (if using local AI)\n4. Or Groq API key is set (in backend/.env)`,
                 timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             };
             updateMessages([...updatedMessages, errorMsg]);
+        } finally {
+            // Resume mic for next turn if voice mode still on
+            if (voiceModeActiveRef.current && !voiceCallActive) {
+                const wakeEnabled = localStorage.getItem('vezora_wake_word_enabled') === 'true';
+                // Only return to wake-word gate if user didn't manually open mic for active chat
+                // Manual toggle sets isPassiveListening false; wake-boot sets it true.
+                if (wakeEnabled && isPassiveListening) {
+                    setIsPassiveListening(true);
+                }
+                startListening();
+            }
         }
     };
 
-    const toggleVoice = () => {
-        if (isListening || voiceModeActive) {
-            stopListening();
-            setVoiceModeActive(false);
-            setIsPassiveListening(false);
-        } else {
-            startListening();
-            setVoiceModeActive(true);
-            setIsPassiveListening(false); // Manual click bypasses wake word
+    const resolveToolConfirm = async (pendingId: string, approve: boolean) => {
+        setPendingConfirm(null);
+        setIsTyping(true);
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/chat`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    messages: [{ role: 'user', content: approve ? 'confirm' : 'cancel' }],
+                    confirmTool: { pendingId, approve },
+                    context: getContextPayload()
+                })
+            });
+            const data = await response.json();
+            setIsTyping(false);
+            const newAiMsg: Message = {
+                id: data.id || (Date.now() + 1).toString(),
+                role: 'assistant',
+                content: data.content,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                provider: data.provider,
+                model: data.model,
+                tools: data.tools
+            };
+            updateMessages([...messages, newAiMsg]);
+            if (approve) speak(data.content);
+        } catch (err) {
+            console.error(err);
+            setIsTyping(false);
         }
     };
 
@@ -195,7 +264,7 @@ export const ChatPage = () => {
         try {
             const response = await fetch(`${BACKEND_URL}/api/structured-memory`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
@@ -206,8 +275,7 @@ export const ChatPage = () => {
                 })
             });
             if (response.ok) {
-                // Could add a toast notification here
-                console.log('✅ Extracted to Neural Core');
+                pushAction('memory:extract');
             }
         } catch (err) {
             console.error('Failed to extract memory', err);
@@ -216,7 +284,6 @@ export const ChatPage = () => {
 
     return (
         <div className="flex h-full w-full relative">
-            {/* Chat Sidebar */}
             <ChatSidebar
                 sessions={sessions}
                 activeChatId={activeChatId}
@@ -226,9 +293,7 @@ export const ChatPage = () => {
                 onRenameChat={renameChat}
             />
 
-            {/* Main Chat Stream */}
             <div className="flex-1 flex flex-col h-full relative z-10">
-                {/* Header with Chat Title and Clear button */}
                 <div className="flex items-center justify-between px-6 py-3 border-b border-white/5 bg-background/80 backdrop-blur-sm">
                     <div className="flex items-center gap-3">
                         <h2 className="text-lg font-semibold text-text/90">
@@ -237,55 +302,64 @@ export const ChatPage = () => {
                         <span className="text-xs text-text/40">
                             {messages.length > 1 && `${messages.length - 1} message${messages.length > 2 ? 's' : ''}`}
                         </span>
+                        <span className="hidden md:inline text-[10px] px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-text/40">
+                            Context: {contextLabel}
+                        </span>
                     </div>
                     {messages.length > 1 && (
                         <button
                             onClick={clearActiveChat}
                             className="text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 transition-all"
                         >
-                            🗑️ Clear
+                            Clear
                         </button>
                     )}
                 </div>
-                
-                <ChatBox 
-                    messages={messages.filter(m => m.role !== 'system') as Message[]} 
+
+                <ChatBox
+                    messages={messages.filter(m => m.role !== 'system') as Message[]}
                     isTyping={isTyping}
                     onReplayMessage={(content) => speak(content)}
                     onExtractMemory={handleExtractMemory}
+                    onConfirmTool={(id) => resolveToolConfirm(id, true)}
+                    onCancelTool={(id) => resolveToolConfirm(id, false)}
                 />
 
                 <div className="sticky bottom-0 w-full z-20">
                     <InputPanel
                         onSend={handleSend}
-                        isListening={isListening || voiceModeActive}
+                        isListening={voiceModeActive}
                         isSpeaking={isSpeaking}
                         onVoiceToggle={toggleVoice}
-                        isPassiveMode={isPassiveListening}
+                        isPassiveMode={isPassiveListening && voiceModeActive}
                     />
                 </div>
             </div>
 
-            {/* Right Widget Panel (Desktop) */}
             <div className="hidden xl:flex w-72 flex-col gap-4 p-6 border-l border-white/5 bg-black/20 h-full overflow-y-auto">
                 <AppShortcuts />
-
-                {/* Action Log Placeholder */}
                 <div className="bg-black/20 backdrop-blur-md border border-white/5 rounded-2xl p-4 flex-1 min-h-[200px]">
                     <h3 className="text-xs font-bold text-text/50 uppercase tracking-widest mb-4">Action Log</h3>
                     <div className="space-y-3">
                         <div className="flex flex-col gap-1 border-l-2 border-primary/30 pl-3">
                             <span className="text-xs text-text/80">System Boot</span>
-                            <span className="text-[10px] text-text/30 font-mono">10:42:01 AM</span>
+                            <span className="text-[10px] text-text/30 font-mono">ready</span>
                         </div>
                         <div className="flex flex-col gap-1 border-l-2 border-secondary/30 pl-3">
-                            <span className="text-xs text-text/80">Microphone Access</span>
-                            <span className="text-[10px] text-text/30 font-mono">10:42:05 AM</span>
+                            <span className="text-xs text-text/80">Context: {contextLabel}</span>
+                            <span className="text-[10px] text-text/30 font-mono">live</span>
                         </div>
                     </div>
                 </div>
             </div>
 
+            <ConfirmModal
+                open={!!pendingConfirm}
+                title="Confirm risky action"
+                preview={pendingConfirm?.preview || ''}
+                onConfirm={() => pendingConfirm && resolveToolConfirm(pendingConfirm.pendingId, true)}
+                onCancel={() => pendingConfirm && resolveToolConfirm(pendingConfirm.pendingId, false)}
+            />
         </div>
     );
 };

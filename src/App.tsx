@@ -6,19 +6,22 @@ import { MemoryPage } from './pages/MemoryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { TaskManagerPage } from './pages/TaskManagerPage';
+import { FilesPage } from './pages/FilesPage';
+import { ActivityPage } from './pages/ActivityPage';
 import { LaunchSplash } from './components/LaunchSplash';
 import { MiniMode } from './components/MiniMode';
 import { VoiceCallWidget } from './components/VoiceCallWidget';
 import { useVoiceCall } from './hooks/useVoiceCall';
 import { useAuth } from './contexts/AuthContext';
+import { useAppContext } from './contexts/AppContext';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
-import { Minimize2, Phone, Loader2 } from 'lucide-react';
+import { Minimize2, Phone, Loader2, Eye } from 'lucide-react';
 import './index.css';
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
-  const [currentView, setCurrentView] = useState<View>('chat');
+  const { page: currentView, setPage: setCurrentView, contextLabel, setVoiceCallActive } = useAppContext();
   const [showSplash, setShowSplash] = useState(true);
   const [isMiniMode, setIsMiniMode] = useState(false);
   const [showRegister, setShowRegister] = useState(false);
@@ -36,6 +39,10 @@ function App() {
     toggleMute,
     toggleListen
   } = useVoiceCall();
+
+  useEffect(() => {
+    setVoiceCallActive(isVoiceCallActive);
+  }, [isVoiceCallActive, setVoiceCallActive]);
 
   // Hide splash after 3 seconds
   useEffect(() => {
@@ -76,8 +83,10 @@ function App() {
       'memory': <MemoryPage />,
       'profile': <ProfilePage />,
       'tasks': <TaskManagerPage />,
+      'files': <FilesPage />,
+      'activity': <ActivityPage />,
       'settings': <SettingsPage />,
-      'apps': <ChatPage /> // Placeholder for apps view
+      'apps': <ChatPage />
     };
     return views[currentView] || <ChatPage />;
   };
@@ -152,7 +161,7 @@ function App() {
             />
 
             {/* Global Navigation Rail */}
-            <NavRail currentView={currentView} onViewChange={setCurrentView} />
+            <NavRail currentView={currentView as View} onViewChange={setCurrentView} />
 
             {/* Main Content Area */}
             <main className="flex-1 relative z-10 flex flex-col h-full overflow-hidden">
@@ -174,6 +183,10 @@ function App() {
                   >
                     {currentView === 'chat' ? 'Vezora Live' : `System // ${currentView}`}
                   </motion.div>
+                  <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/5 border border-white/5 text-[10px] text-text/45">
+                    <Eye size={10} className="text-secondary" />
+                    <span className="truncate max-w-[220px]">Context: {contextLabel || 'chat'}</span>
+                  </div>
                 </div>
 
                 <div className="flex items-center gap-4">

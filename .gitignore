@@ -1,9 +1,9 @@
 # Environment Variables - NEVER COMMIT!
 .env
-.env.local
-.env.production
-.env.development
-.env.test
+.env.*
+*.env
+!.env.example
+!*.env.example
 backend/.env
 backend/.env.local
 backend/.env.production
@@ -11,8 +11,26 @@ backend/.env.production
 # User Data - NEVER COMMIT!
 backend/data/
 
-# Piper TTS binaries (download separately — see docs)
+# Piper TTS binaries and voice models (download separately)
 backend/bin/piper/
+*.onnx
+
+# Local PDFs (design notes / dumps — not source)
+*.pdf
+
+# Generated / downloaded media
+*.wav
+*.mp3
+*.ogg
+*.webm
+
+# Accidental OAuth / cloud credential dumps
+credentials.json
+client_secret*.json
+*service-account*.json
+token.json
+tokens.json
+google-tokens.json
 
 # Database
 *.db
@@ -68,6 +86,7 @@ out/
 
 # OS Files
 Thumbs.db
+ehthumbs.db
 desktop.ini
 .DS_Store
 ._*
@@ -81,6 +100,9 @@ temp/
 *.temp
 *.bak
 *.backup
+*.orig
+*.tgz
+*.tsbuildinfo
 Untitled*.md
 
 # Certificates and Keys

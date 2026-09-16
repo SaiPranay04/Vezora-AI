@@ -11,6 +11,11 @@ let mainWindow;
 let backendProcess;
 
 function startBackend() {
+  if (process.env.SKIP_ELECTRON_BACKEND === '1') {
+    console.log('Skipping Electron backend spawn (external backend already running).');
+    return;
+  }
+
   const backendPath = path.join(__dirname, 'backend', 'index.js');
   console.log('Starting backend at:', backendPath);
   

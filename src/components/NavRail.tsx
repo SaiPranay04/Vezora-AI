@@ -1,9 +1,9 @@
-import { MessageSquare, Brain, Settings, LayoutGrid, User, CheckSquare, LogOut } from 'lucide-react';
+import { MessageSquare, Brain, Settings, LayoutGrid, User, CheckSquare, LogOut, FolderOpen, Activity } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'framer-motion';
 import { useAuth } from '../contexts/AuthContext';
 
-export type View = 'chat' | 'memory' | 'profile' | 'tasks' | 'apps' | 'settings';
+export type View = 'chat' | 'memory' | 'profile' | 'tasks' | 'apps' | 'settings' | 'files' | 'activity';
 
 interface NavRailProps {
     currentView: View;
@@ -16,8 +16,10 @@ export const NavRail = ({ currentView, onViewChange }: NavRailProps) => {
     const navItems = [
         { id: 'chat', icon: MessageSquare, label: 'Chat', color: 'text-primary' },
         { id: 'memory', icon: Brain, label: 'Memory', color: 'text-secondary' },
-        { id: 'profile', icon: User, label: 'Profile', color: 'text-green-400' },
         { id: 'tasks', icon: CheckSquare, label: 'Tasks', color: 'text-yellow-400' },
+        { id: 'files', icon: FolderOpen, label: 'Files', color: 'text-cyan-400' },
+        { id: 'activity', icon: Activity, label: 'Activity', color: 'text-orange-400' },
+        { id: 'profile', icon: User, label: 'Profile', color: 'text-green-400' },
         { id: 'apps', icon: LayoutGrid, label: 'Apps', color: 'text-purple-400' },
         { id: 'settings', icon: Settings, label: 'Config', color: 'text-pink-400' },
     ] as const;

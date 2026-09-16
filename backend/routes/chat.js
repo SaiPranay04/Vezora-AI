@@ -17,6 +17,8 @@ import { processWithContext } from '../services/coordinatorService.js';
 import { cleanTextForTTS } from '../utils/textCleaner.js';
 import { addTask } from '../services/taskService.js';
 import { optionalAuth } from '../middleware/auth.js';
+import { executeTool, inferToolCall } from '../core/toolExecutor.js';
+import { compactContext } from '../core/contextEngine.js';
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 
@@ -35,11 +37,52 @@ router.post('/', optionalAuth, async (req, res) => {
       messages: conversationHistory, 
       includeMemory = false, 
       useContext = true,
-      personality = 'friendly'
+      personality = 'friendly',
+      context = null,
+      confirmTool: confirmToolPayload = null
     } = req.body;
 
     // Get userId from authenticated user
-    const userId = req.userId || req.body.userId;
+    const userId = req.userId || req.body.userId || 'default';
+
+    // Confirm a previously gated risky tool
+    if (confirmToolPayload?.pendingId) {
+      const { confirmTool } = await import('../core/toolExecutor.js');
+      const toolResult = await confirmTool(confirmToolPayload.pendingId, {
+        approve: confirmToolPayload.approve !== false,
+        userId
+      });
+      if (toolResult.cancelled) {
+        return res.json({
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: 'Okay — cancelled that action.',
+          provider: 'system',
+          model: 'permissions',
+          tools: [{ name: 'cancelled', status: 'cancelled' }]
+        });
+      }
+      if (toolResult.success) {
+        return res.json({
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `✅ Done: \`${toolResult.toolName}\`\n\n\`\`\`json\n${JSON.stringify(toolResult.result, null, 2).slice(0, 2000)}\n\`\`\``,
+          provider: 'tools',
+          model: 'tool-executor',
+          tools: [{ name: toolResult.toolName, status: 'ok', preview: toolResult.preview, result: toolResult.result }]
+        });
+      }
+      return res.json({
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `❌ ${toolResult.error || 'Tool confirmation failed.'}`,
+        provider: 'tools',
+        model: 'tool-executor',
+        tools: [{ name: toolResult.toolName || 'unknown', status: 'error', error: toolResult.error }]
+      });
+    }
+
+    const contextBlock = compactContext(context || {});
 
     // Support both formats:
     // 1. NEW: messages array (with conversation history)
@@ -78,8 +121,64 @@ router.post('/', optionalAuth, async (req, res) => {
     const lastUserMessageOriginal = message || messages[messages.length - 1]?.content || '';
     const lastUserMessage = lastUserMessageOriginal.toLowerCase();
     
-    // ==================== REMOVED: Regex-based task detection ====================
-    // Now handled intelligently by coordinator with Groq
+    // ==================== Fable tool registry (local tools) ====================
+    const inferred = inferToolCall(lastUserMessageOriginal);
+    if (inferred?.toolName) {
+      console.log('🔧 [TOOLS] Inferred tool:', inferred.toolName);
+      const toolResult = await executeTool(inferred.toolName, inferred.args, { userId });
+
+      if (toolResult.requiresConfirmation) {
+        return res.json({
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `⚠️ This action needs your confirmation:\n\n\`${toolResult.preview}\``,
+          provider: 'tools',
+          model: 'permissions',
+          requiresConfirmation: true,
+          pendingId: toolResult.pendingId,
+          tools: [{
+            name: toolResult.toolName,
+            status: 'pending_confirmation',
+            preview: toolResult.preview,
+            pendingId: toolResult.pendingId,
+            args: toolResult.args
+          }]
+        });
+      }
+
+      if (toolResult.success) {
+        const summary =
+          inferred.toolName === 'todo.list' && toolResult.result?.stats
+            ? `Here's your task summary:\n\`\`\`json\n${JSON.stringify(toolResult.result.stats, null, 2)}\n\`\`\``
+            : inferred.toolName === 'todo.add'
+              ? `✅ Added task: **${inferred.args.title}**`
+              : inferred.toolName === 'file.read'
+                ? `📄 Contents of \`${inferred.args.path}\`:\n\n\`\`\`\n${String(toolResult.result?.content || '').slice(0, 3000)}\n\`\`\``
+                : `✅ Ran \`${toolResult.toolName}\`.\n\n\`\`\`json\n${JSON.stringify(toolResult.result, null, 2).slice(0, 2000)}\n\`\`\``;
+
+        return res.json({
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: summary,
+          provider: 'tools',
+          model: 'tool-executor',
+          contextUsed: contextBlock || undefined,
+          tools: [{ name: toolResult.toolName, status: 'ok', preview: toolResult.preview, result: toolResult.result }]
+        });
+      }
+
+      if (toolResult.malformed) {
+        return res.json({
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `I couldn't run that tool with those parameters: ${toolResult.error}`,
+          provider: 'tools',
+          model: 'tool-executor',
+          tools: [{ name: inferred.toolName, status: 'error', error: toolResult.error }]
+        });
+      }
+      // Fall through on other failures
+    }
 
     // Check if this is a tool-related query (Gmail, Calendar, etc.)
     const isToolQuery = 

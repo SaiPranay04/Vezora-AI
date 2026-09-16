@@ -1,6 +1,6 @@
 @echo off
 REM Vezora AI - Windows Startup Script
-REM This script starts both backend and frontend servers
+REM Starts backend + Electron desktop app (Vite + Electron)
 
 title Vezora AI Launcher
 
@@ -9,6 +9,9 @@ echo ========================================
 echo    VEZORA AI - Starting Services
 echo ========================================
 echo.
+
+REM Always run from this script's directory
+cd /d "%~dp0"
 
 REM Check if Node.js is installed
 where node >nul 2>nul
@@ -27,37 +30,42 @@ if %errorlevel% neq 0 (
     echo.
 )
 
-echo [1/4] Checking Ollama service...
+echo [1/3] Checking Ollama service...
 curl -s http://localhost:11434/api/tags >nul 2>nul
 if %errorlevel% neq 0 (
     echo [INFO] Starting Ollama server...
-    start "Ollama Server" cmd /k "ollama serve"
+    start "Ollama Server" cmd /k ollama serve
     timeout /t 3 /nobreak >nul
 ) else (
     echo [OK] Ollama is already running
 )
 
 echo.
-echo [2/4] Starting Backend Server...
-start "Vezora Backend" cmd /k "cd backend && npm run dev"
-timeout /t 3 /nobreak >nul
+echo [2/3] Starting Backend Server...
+curl -s http://localhost:5000/health >nul 2>nul
+if %errorlevel% equ 0 (
+    echo [OK] Backend is already running on http://localhost:5000
+) else (
+    start "Vezora Backend" cmd /k "cd /d ""%~dp0backend"" && npm run dev"
+    echo [OK] Backend window launched
+    timeout /t 4 /nobreak >nul
+)
 
 echo.
-echo [3/4] Starting Frontend App...
-start "Vezora Frontend" cmd /k "npm run dev"
-
-echo.
-echo [4/4] Opening Browser...
-timeout /t 5 /nobreak >nul
-start http://localhost:5173
+echo [3/3] Starting Electron App (Vite + Desktop)...
+REM SKIP_ELECTRON_BACKEND=1 tells Electron not to spawn a second backend
+start "Vezora Electron" cmd /k "cd /d ""%~dp0"" && set SKIP_ELECTRON_BACKEND=1&& npm run electron:dev"
 
 echo.
 echo ========================================
-echo    VEZORA AI - All Services Started!
+echo    VEZORA AI - Launching Desktop App
 echo ========================================
 echo.
 echo Backend:  http://localhost:5000
-echo Frontend: http://localhost:5173
+echo Vite:     http://localhost:5173
+echo Desktop:  Electron window (opens after Vite is ready)
 echo.
-echo Press any key to keep this window open...
+echo Tip: Keep the Backend and Electron console windows open.
+echo.
+echo Press any key to close this launcher window...
 pause >nul

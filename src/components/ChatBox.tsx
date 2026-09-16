@@ -1,15 +1,19 @@
 import { useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { cn } from '../lib/utils';
-import { Bot, User, Volume2, Brain } from 'lucide-react';
+import { Bot, User, Volume2, Brain, Zap, Monitor } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { ToolExecutionCard, type ToolRunInfo } from './ToolExecutionCard';
 
 export interface Message {
     id: string;
     role: 'user' | 'assistant';
     content: string;
     timestamp: string;
+    provider?: string;
+    model?: string;
+    tools?: ToolRunInfo[];
 }
 
 interface ChatBoxProps {
@@ -17,13 +21,42 @@ interface ChatBoxProps {
     isTyping?: boolean;
     onReplayMessage?: (content: string) => void;
     onExtractMemory?: (content: string) => void;
+    onConfirmTool?: (pendingId: string) => void;
+    onCancelTool?: (pendingId: string) => void;
 }
 
-export const ChatBox = ({ messages, isTyping, onReplayMessage, onExtractMemory }: ChatBoxProps) => {
+function ProviderBadge({ provider, model }: { provider?: string; model?: string }) {
+    if (!provider) return null;
+    const isGroq = provider.toLowerCase().includes('groq');
+    const isOllama = provider.toLowerCase().includes('ollama');
+    const isTools = provider.toLowerCase().includes('tool');
+    const label = isGroq
+        ? `⚡ Groq${model ? ` · ${model}` : ''}`
+        : isOllama
+            ? `💻 Ollama${model ? ` · ${model}` : ''}`
+            : isTools
+                ? `🔧 Tools`
+                : `${provider}${model ? ` · ${model}` : ''}`;
+
+    return (
+        <span className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-text/50">
+            {isGroq ? <Zap size={9} /> : isOllama ? <Monitor size={9} /> : null}
+            {label}
+        </span>
+    );
+}
+
+export const ChatBox = ({
+    messages,
+    isTyping,
+    onReplayMessage,
+    onExtractMemory,
+    onConfirmTool,
+    onCancelTool
+}: ChatBoxProps) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
 
-    // Scroll only the chat container — NOT the whole page
     useEffect(() => {
         const container = containerRef.current;
         if (container) {
@@ -55,7 +88,6 @@ export const ChatBox = ({ messages, isTyping, onReplayMessage, onExtractMemory }
                                 : "bg-bubble-ai border-white/5 text-text rounded-tl-none shadow-[0_0_15px_-3px_rgba(142,68,255,0.1)] hover:shadow-[0_0_25px_-3px_rgba(142,68,255,0.2)] hover:border-white/10"
                         )}>
 
-                            {/* Icon */}
                             <div className={cn(
                                 "w-8 h-8 rounded-full flex items-center justify-center shrink-0",
                                 msg.role === 'user' ? "bg-primary/20" : "bg-secondary/20"
@@ -64,11 +96,15 @@ export const ChatBox = ({ messages, isTyping, onReplayMessage, onExtractMemory }
                             </div>
 
                             <div className="flex flex-col gap-1 w-full">
+                                {msg.role === 'assistant' && (
+                                    <div className="mb-1">
+                                        <ProviderBadge provider={msg.provider} model={msg.model} />
+                                    </div>
+                                )}
                                 <div className="text-sm leading-relaxed font-light tracking-wide prose prose-invert prose-sm max-w-none">
                                     <ReactMarkdown 
                                         remarkPlugins={[remarkGfm]}
                                         components={{
-                                            // Custom styling for markdown elements
                                             p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
                                             a: ({href, children}) => <a href={href} className="text-primary hover:text-primary/80 underline" target="_blank" rel="noopener noreferrer">{children}</a>,
                                             code: ({children}) => <code className="bg-black/30 px-1.5 py-0.5 rounded text-secondary font-mono text-xs">{children}</code>,
@@ -82,6 +118,16 @@ export const ChatBox = ({ messages, isTyping, onReplayMessage, onExtractMemory }
                                         {msg.content}
                                     </ReactMarkdown>
                                 </div>
+
+                                {msg.tools?.map((tool, idx) => (
+                                    <ToolExecutionCard
+                                        key={`${msg.id}-tool-${idx}`}
+                                        tool={tool}
+                                        onConfirm={onConfirmTool}
+                                        onCancel={onCancelTool}
+                                    />
+                                ))}
+
                                 <div className={cn(
                                     "flex items-center gap-2 mt-1",
                                     msg.role === 'user' ? "justify-start" : "justify-end"

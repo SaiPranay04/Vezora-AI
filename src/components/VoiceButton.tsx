@@ -10,6 +10,8 @@ interface VoiceButtonProps {
 }
 
 export const VoiceButton = ({ isListening, isSpeaking, onToggle, isPassiveMode = false }: VoiceButtonProps) => {
+    // isListening prop means "voice mode enabled" from ChatPage — keep orb active
+    // even between recognition restarts so it doesn't look muted.
     const isActivelyListening = isListening && !isPassiveMode;
 
     return (

@@ -41,6 +41,7 @@ import searchRoutes from './routes/search.js';
 import workflowsRoutes from './routes/workflows.js';
 import ocrRoutes from './routes/ocr.js';
 import ttsRoutes from './routes/tts.js';
+import toolsRoutes from './routes/tools.js';
 
 // NEW: Context-aware memory and task routes
 import structuredMemoryRoutes from './routes/structuredMemory.js';
@@ -193,6 +194,7 @@ app.use('/api/tasks', apiLimiter, tasksRoutes);
 app.use('/api/coordinator', apiLimiter, coordinatorRoutes);
 app.use('/api/profile', apiLimiter, profileRoutes);
 app.use('/api/tts', apiLimiter, ttsRoutes);
+app.use('/api/tools', apiLimiter, toolsRoutes);
 
 // Mount auth callback at root level for Google OAuth (matches redirect URI)
 app.use('/auth', authRoutes);

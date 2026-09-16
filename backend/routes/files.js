@@ -127,16 +127,13 @@ router.post('/list', async (req, res) => {
       });
     }
 
-    const { path } = req.body;
+    const { path: dirPath } = req.body;
+    const resolvedPath = dirPath || process.env.HOME || process.env.USERPROFILE || process.cwd();
 
-    if (!path) {
-      return res.status(400).json({ error: 'Directory path is required' });
-    }
-
-    const files = await listDirectory(path);
+    const files = await listDirectory(resolvedPath);
 
     res.json({
-      path,
+      path: resolvedPath,
       files,
       count: files.length,
       timestamp: new Date().toISOString()

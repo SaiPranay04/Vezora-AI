@@ -9,6 +9,16 @@ export interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
     content: string;
     timestamp: string;
+    provider?: string;
+    model?: string;
+    tools?: Array<{
+        name: string;
+        status: 'ok' | 'error' | 'pending_confirmation' | 'cancelled' | 'running';
+        preview?: string;
+        error?: string;
+        pendingId?: string;
+        result?: unknown;
+    }>;
 }
 
 export interface ChatSession {
