@@ -1,0 +1,212 @@
+{
+  "backend/controllers/appsController.js": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "backend/controllers/voiceController.js": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "backend/core/llmRouter.js": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "backend/core/permissions.js": {
+    "no-useless-escape": {
+      "count": 1
+    }
+  },
+  "backend/index.js": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "backend/middleware/auth.js": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "backend/routes/chat.js": {
+    "no-unused-vars": {
+      "count": 5
+    }
+  },
+  "backend/routes/profile.js": {
+    "no-unused-vars": {
+      "count": 4
+    },
+    "no-empty": {
+      "count": 4
+    }
+  },
+  "backend/routes/search.js": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "backend/routes/structuredMemory.js": {
+    "no-unused-vars": {
+      "count": 3
+    }
+  },
+  "backend/routes/tasks.js": {
+    "no-unused-vars": {
+      "count": 3
+    }
+  },
+  "backend/services/coordinatorService.js": {
+    "no-unused-vars": {
+      "count": 5
+    }
+  },
+  "backend/services/reminderService.js": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "backend/services/retrievalService.js": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "backend/services/workflowEngine.js": {
+    "no-case-declarations": {
+      "count": 1
+    }
+  },
+  "backend/test-gemini-embeddings.js": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "backend/test-hybrid-system.js": {
+    "no-unused-vars": {
+      "count": 3
+    }
+  },
+  "backend/utils/googleAuth.js": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "backend/utils/jwt.js": {
+    "no-unused-vars": {
+      "count": 2
+    }
+  },
+  "backend/utils/langchainAgent.js": {
+    "no-unused-vars": {
+      "count": 5
+    }
+  },
+  "backend/utils/textCleaner.js": {
+    "no-useless-escape": {
+      "count": 2
+    }
+  },
+  "main.js": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/components/CalendarPanel.tsx": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/components/CameraInput.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/components/EmailPanel.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    },
+    "react-hooks/static-components": {
+      "count": 1
+    }
+  },
+  "src/components/EnhancedAppLauncher.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/components/OnboardingTutorial.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/components/VoiceCallMode.tsx": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "react-hooks/purity": {
+      "count": 8
+    }
+  },
+  "src/components/WakeWordDetector.tsx": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "src/components/WorkflowBuilder.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/contexts/AppContext.tsx": {
+    "react-refresh/only-export-components": {
+      "count": 1
+    }
+  },
+  "src/contexts/AuthContext.tsx": {
+    "react-refresh/only-export-components": {
+      "count": 2
+    }
+  },
+  "src/hooks/useChats.ts": {
+    "react-hooks/immutability": {
+      "count": 1
+    }
+  },
+  "src/hooks/useVoice.ts": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 6
+    }
+  },
+  "src/pages/ActivityPage.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/pages/FilesPage.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 2
+    }
+  },
+  "src/pages/LoginPage.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/pages/ProfilePage.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/pages/RegisterPage.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  }
+}

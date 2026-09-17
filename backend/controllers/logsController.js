@@ -80,7 +80,11 @@ export async function addLog(logData) {
 
   const newLog = {
     id: uuidv4(),
-    ...logData,
+    userId,
+    type: String(logData.type || 'event').slice(0,40),
+    action: String(logData.action || 'event').slice(0,80),
+    status: String(logData.status || 'recorded').slice(0,24),
+    // Do not persist prompts, paths, mail, arguments or arbitrary metadata.
     timestamp: new Date().toISOString()
   };
 

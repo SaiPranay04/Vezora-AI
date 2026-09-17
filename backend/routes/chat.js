@@ -11,8 +11,8 @@ import { getMemory } from '../controllers/memoryController.js';
 import { addLog } from '../controllers/logsController.js';
 import { executeRoutedQuery, determineStreamProvider } from '../core/llmRouter.js';
 import { getSettings } from '../controllers/settingsController.js';
-import { executeAgent } from '../utils/langchainAgent.js';
-import { isAuthenticated } from '../utils/googleAuth.js';
+
+
 import { processWithContext } from '../services/coordinatorService.js';
 import { cleanTextForTTS } from '../utils/textCleaner.js';
 import { addTask } from '../services/taskService.js';
@@ -43,13 +43,13 @@ router.post('/', optionalAuth, async (req, res) => {
     } = req.body;
 
     // Get userId from authenticated user
-    const userId = req.userId || req.body.userId || 'default';
+    const userId = req.userId;
 
     // Confirm a previously gated risky tool
     if (confirmToolPayload?.pendingId) {
       const { confirmTool } = await import('../core/toolExecutor.js');
       const toolResult = await confirmTool(confirmToolPayload.pendingId, {
-        approve: confirmToolPayload.approve !== false,
+        approve: confirmToolPayload.approve,
         userId
       });
       if (toolResult.cancelled) {
@@ -102,16 +102,6 @@ router.post('/', optionalAuth, async (req, res) => {
     // Determine AI provider (Gemini preferred, Ollama fallback)
     const useGemini = isGeminiAvailable();
     const useOllama = !useGemini || process.env.AI_PROVIDER === 'ollama';
-
-    // Check provider availability
-    if (useOllama) {
-      const ollamaHealthy = await isOllamaHealthy();
-      if (!ollamaHealthy && !useGemini) {
-        return res.status(503).json({
-          error: 'No AI provider available. Start Ollama (ollama serve) or add GEMINI_API_KEY to .env'
-        });
-      }
-    }
 
     // Get user settings
     const settings = await getSettings(userId);
@@ -177,7 +167,17 @@ router.post('/', optionalAuth, async (req, res) => {
           tools: [{ name: inferred.toolName, status: 'error', error: toolResult.error }]
         });
       }
-      // Fall through on other failures
+      return res.status(403).json({ error: toolResult.error || 'Tool denied' });
+    }
+
+    // Check provider availability
+    if (useOllama && !isGroqAvailable()) {
+      const ollamaHealthy = await isOllamaHealthy();
+      if (!ollamaHealthy && !useGemini) {
+        return res.status(503).json({
+          error: 'No AI provider available. Start Ollama (ollama serve) or add GEMINI_API_KEY to .env'
+        });
+      }
     }
 
     // Check if this is a tool-related query (Gmail, Calendar, etc.)
@@ -191,52 +191,7 @@ router.post('/', optionalAuth, async (req, res) => {
       lastUserMessage.includes('meeting') ||
       lastUserMessage.includes('event');
 
-    // If tool query and user is authenticated, use LangChain agent
-    if (isToolQuery) {
-      const authenticated = await isAuthenticated();
-      console.log('🔍 Tool query detected:', lastUserMessage, '| Authenticated:', authenticated);
-      
-      if (authenticated) {
-        console.log('🔧 Using LangChain agent for tool execution');
-        const startTime = Date.now();
-        
-        try {
-          const agentResponse = await executeAgent(lastUserMessage);
-          console.log('✅ Agent response:', agentResponse.substring(0, 200));
-          const responseTime = Date.now() - startTime;
-      
-          
-          return res.json({
-            id: Date.now().toString(),
-            role: 'assistant',
-            content: agentResponse,
-            timestamp: new Date().toISOString(),
-            model: 'langchain-agent',
-            provider: 'agent',
-            intent: { action: 'tool_use', category: 'integration' },
-            responseTime,
-            voiceEnabled: voiceCallMode,
-            voiceText: agentResponse
-          });
-        } catch (agentError) {
-          console.error('❌ Agent error:', agentError);
-          console.error('❌ Agent error stack:', agentError.stack);
-          // Fall through to normal AI conversation if agent fails
-        }
-      } else if (isToolQuery) {
-        // User asking about Gmail/Calendar but not authenticated
-        return res.json({
-          id: Date.now().toString(),
-          role: 'assistant',
-          content: 'I can help with that, but you need to authenticate with Google first. Please visit http://localhost:5000/auth-test.html to connect your Google account.',
-          timestamp: new Date().toISOString(),
-          model: 'system',
-          provider: 'system',
-          intent: { action: 'auth_required', category: 'system' },
-          responseTime: 0
-        });
-      }
-    }
+    if (isToolQuery) return res.status(403).json({ error: 'Google agent actions are disabled pending per-user authorization and confirmed writes.' });
 
     // ==================== NEW: CONTEXT-AWARE MODE ====================
     // Use coordinator for intelligent context retrieval and memory updates
@@ -377,7 +332,8 @@ router.post('/', optionalAuth, async (req, res) => {
  */
 router.post('/stream', async (req, res) => {
   try {
-    const { message, messages: conversationHistory, includeMemory = false, userId = 'default' } = req.body;
+    const { message, messages: conversationHistory, includeMemory = false } = req.body;
+    const userId = req.userId;
 
     // Support both formats (same as regular /chat endpoint)
     let messages = [];
@@ -404,45 +360,7 @@ router.post('/stream', async (req, res) => {
       lastUserMessage.includes('meeting') ||
       lastUserMessage.includes('event');
 
-    // If tool query and user is authenticated, use LangChain agent (non-streaming)
-    if (isToolQuery) {
-      const authenticated = await isAuthenticated();
-      console.log('🔍 [STREAM] Tool query detected:', lastUserMessage, '| Authenticated:', authenticated);
-      
-      if (authenticated) {
-        console.log('🔧 [STREAM] Using LangChain agent for tool execution');
-        
-        try {
-          // Set up SSE headers first
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache');
-          res.setHeader('Connection', 'keep-alive');
-
-          const agentResponse = await executeAgent(lastUserMessage);
-          console.log('✅ [STREAM] Agent response:', agentResponse.substring(0, 200));
-          
-          // Send as single chunk for tool responses
-          res.write(`data: ${JSON.stringify({ type: 'chunk', content: agentResponse })}\n\n`);
-          res.write(`data: ${JSON.stringify({ type: 'done', fullResponse: agentResponse })}\n\n`);
-          res.end();
-          return;
-        } catch (agentError) {
-          console.error('❌ [STREAM] Agent error:', agentError);
-          // Fall through to normal streaming if agent fails
-        }
-      } else if (isToolQuery) {
-        // User asking about Gmail/Calendar but not authenticated
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        
-        const authMessage = 'I can help with that, but you need to authenticate with Google first. Please visit the authentication page to connect your Google account.';
-        res.write(`data: ${JSON.stringify({ type: 'chunk', content: authMessage })}\n\n`);
-        res.write(`data: ${JSON.stringify({ type: 'done', fullResponse: authMessage })}\n\n`);
-        res.end();
-        return;
-      }
-    }
+    if (isToolQuery) return res.status(403).json({ error: 'Legacy Google actions disabled' });
 
     // Set up SSE headers
     res.setHeader('Content-Type', 'text/event-stream');

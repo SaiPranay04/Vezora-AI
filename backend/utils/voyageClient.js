@@ -4,8 +4,8 @@
  * Using REST API directly for better compatibility
  */
 
-import dotenv from 'dotenv';
-dotenv.config();
+
+
 
 const VOYAGE_API_URL = 'https://api.voyageai.com/v1/embeddings';
 

@@ -1,3 +1,4 @@
+import { identities } from '../security/identity.js';
 /**
  * Authentication Middleware
  * Verifies JWT tokens and attaches user info to requests
@@ -11,6 +12,7 @@ import { getUserById } from '../models/User.js';
  * Usage: Add as middleware to protected routes
  */
 export async function authenticate(req, res, next) {
+  if (req.userId && identities.getStore()) return next();
   try {
     // Extract token from Authorization header
     const authHeader = req.headers.authorization;
@@ -47,7 +49,7 @@ export async function authenticate(req, res, next) {
     req.user = user;
     req.userId = user.id;
 
-    next();
+    identities.run({ userId: user.id, sessionId: decoded.jti }, next);
   } catch (error) {
     console.error('❌ Authentication error:', error.message);
     return res.status(500).json({
@@ -61,41 +63,7 @@ export async function authenticate(req, res, next) {
  * Optional authentication - doesn't fail if no token
  * Useful for routes that work with or without auth
  */
-export async function optionalAuth(req, res, next) {
-  try {
-    const authHeader = req.headers.authorization;
-    const token = extractTokenFromHeader(authHeader);
-
-    if (!token) {
-      req.user = null;
-      req.userId = null;
-      return next();
-    }
-
-    try {
-      const decoded = verifyToken(token);
-      const user = await getUserById(decoded.userId);
-      
-      if (user) {
-        req.user = user;
-        req.userId = user.id;
-      } else {
-        req.user = null;
-        req.userId = null;
-      }
-    } catch (error) {
-      req.user = null;
-      req.userId = null;
-    }
-
-    next();
-  } catch (error) {
-    console.error('❌ Optional auth error:', error.message);
-    req.user = null;
-    req.userId = null;
-    next();
-  }
-}
+export const optionalAuth = authenticate;
 
 /**
  * Check if user is admin
@@ -140,24 +108,8 @@ export function validateOwnership(resourceUserId) {
  * Fallback to 'default' for backward compatibility during migration
  */
 export function getUserIdFromRequest(req) {
-  // Priority 1: Authenticated user ID (from JWT — trusted)
-  if (req.userId) {
-    return req.userId;
-  }
-
-  // Priority 2: Query parameter (ONLY when not authenticated — for testing/migration)
-  if (req.query.userId) {
-    return req.query.userId;
-  }
-
-  // Priority 3: Body parameter (ONLY when not authenticated — for migration)
-  if (req.body && req.body.userId) {
-    return req.body.userId;
-  }
-
-  // Fallback: Use 'default' for backward compatibility
-  // TODO: Remove this fallback after full migration
-  return 'default';
+  if (!req.userId) throw new Error('Authentication required');
+  return req.userId;
 }
 
 export default {

@@ -2,11 +2,11 @@
   "name": "vezora-backend",
   "version": "1.0.0",
   "description": "Vezora AI Assistant Backend - Local LLM + Voice",
-  "main": "index.js",
+  "main": "bootstrap.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node bootstrap.js",
+    "dev": "nodemon bootstrap.js"
   },
   "dependencies": {
     "@google-cloud/local-auth": "^3.0.1",

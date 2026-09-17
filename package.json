@@ -7,11 +7,19 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
+    "lint": "eslint . --suppressions-location eslint-baseline.json --pass-on-unpruned-suppressions",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "npm run build && electron-builder",
-    "postinstall": "electron-builder install-app-deps"
+    "electron:build": "npm run build && npm run package:stage && electron-builder --win --x64 && npm run package:verify",
+    "postinstall": "electron-builder install-app-deps",
+    "typecheck": "tsc -b --pretty false",
+    "setup:backend": "node scripts/restore-backend.mjs",
+    "backend:dev": "node scripts/electron-node.mjs backend/bootstrap.js",
+    "test": "node scripts/electron-node.mjs --test tests/*.test.js",
+    "package:stage": "node scripts/prepare-package.mjs",
+    "package:verify": "node scripts/verify-package.mjs",
+    "lint:strict": "eslint . --suppressions-location .no-baseline.json",
+    "test:desktop": "node scripts/run-smoke.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -56,24 +64,32 @@
     "appId": "com.vezora.ai",
     "productName": "Vezora AI",
     "directories": {
-      "output": "release"
+      "output": "release-phase1"
     },
     "files": [
       "dist/**/*",
       "main.js",
-      "backend/**/*"
+      "desktop/**/*",
+      "package.json",
+      "!**/.env*",
+      "!**/data/**"
     ],
     "extraResources": [
       {
-        "from": "backend",
+        "from": ".package/backend",
         "to": "backend",
         "filter": [
-          "**/*"
+          "**/*",
+          "!**/.env*",
+          "!data/**",
+          "!**/*.db",
+          "!**/*tokens*.json"
         ]
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "signAndEditExecutable": false
     },
     "linux": {
       "target": "AppImage"

@@ -36,7 +36,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   // Initialize auth state from localStorage
   useEffect(() => {
-    const storedToken = localStorage.getItem('authToken');
+    const storedToken = sessionStorage.getItem('authToken');
     const storedUser = localStorage.getItem('user');
 
     if (storedToken && storedUser) {
@@ -99,8 +99,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const data = await response.json();
 
       // Store auth data
-      localStorage.setItem('authToken', data.token);
-      localStorage.setItem('refreshToken', data.refreshToken);
+      sessionStorage.setItem('authToken', data.token);
+      sessionStorage.setItem('refreshToken', data.refreshToken);
       localStorage.setItem('user', JSON.stringify(data.user));
 
       setToken(data.token);
@@ -132,8 +132,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const data = await response.json();
 
       // Store auth data
-      localStorage.setItem('authToken', data.token);
-      localStorage.setItem('refreshToken', data.refreshToken);
+      sessionStorage.setItem('authToken', data.token);
+      sessionStorage.setItem('refreshToken', data.refreshToken);
       localStorage.setItem('user', JSON.stringify(data.user));
 
       setToken(data.token);
@@ -148,9 +148,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
    * Logout user
    */
   const logout = () => {
+    const currentToken = sessionStorage.getItem('authToken');
+    if (currentToken) void fetch(API_BASE_URL + '/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + currentToken } }).catch(() => {});
     // Clear local storage
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('refreshToken');
+    sessionStorage.removeItem('authToken');
+    sessionStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
 
     // Clear state
@@ -164,7 +166,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
    */
   const refreshToken = async () => {
     try {
-      const storedRefreshToken = localStorage.getItem('refreshToken');
+      const storedRefreshToken = sessionStorage.getItem('refreshToken');
 
       if (!storedRefreshToken) {
         throw new Error('No refresh token available');
@@ -185,8 +187,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const data = await response.json();
 
       // Update stored tokens
-      localStorage.setItem('authToken', data.token);
-      localStorage.setItem('refreshToken', data.refreshToken);
+      sessionStorage.setItem('authToken', data.token);
+      sessionStorage.setItem('refreshToken', data.refreshToken);
 
       setToken(data.token);
     } catch (error) {
@@ -225,7 +227,7 @@ export const useAuth = () => {
  * Helper to get auth headers for API requests
  */
 export const getAuthHeaders = () => {
-  const token = localStorage.getItem('authToken');
+  const token = sessionStorage.getItem('authToken');
   return token
     ? {
         Authorization: `Bearer ${token}`,

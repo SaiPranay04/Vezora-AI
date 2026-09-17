@@ -9,13 +9,13 @@ const router = express.Router();
  */
 router.post('/', async (req, res) => {
   const { text } = req.body;
-  if (!text) {
+  if (typeof text !== 'string' || !text.trim() || text.length > 10000) {
     return res.status(400).json({ error: 'Text field is required' });
   }
 
   try {
     // Stream audio directly back to client
-    streamTTS(text, res);
+    await streamTTS(text, res);
   } catch (error) {
     console.error('TTS Route Error:', error);
     if (!res.headersSent) {

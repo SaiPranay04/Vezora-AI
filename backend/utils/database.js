@@ -110,3 +110,5 @@ export function getDatabase() {
   }
   return db;
 }
+
+export function closeDatabase() { if (db?.open) db.close(); }

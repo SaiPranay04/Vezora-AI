@@ -1,308 +1,77 @@
-/**
- * Vezora AI Assistant - Main Backend Server
- * Local LLM + Voice + Memory + Desktop Integration
- */
-
+import { stopChildren } from './security/children.js';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import dotenv from 'dotenv';
-import { WebSocketServer } from 'ws';
-import http from 'http';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-// Get current directory (for ES modules)
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Load environment variables with explicit path
-dotenv.config({ path: path.join(__dirname, '.env') });
-
-// Debug: Check if Gemini API key is loaded
-console.log('🔍 DEBUG: Checking environment variables...');
-console.log('🔍 GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? `SET (${process.env.GEMINI_API_KEY.substring(0, 15)}...)` : 'NOT SET');
-console.log('🔍 AI_PROVIDER:', process.env.AI_PROVIDER || 'not set');
-console.log('🔍 Working directory:', process.cwd());
-console.log('');
-
-// Import routes
+import http from 'node:http';
+import { config } from './config.js';
+import { localTransport, disabled } from './security/transport.js';
+import { authenticate } from './middleware/auth.js';
+import { apiLimiter } from './middleware/rateLimiter.js';
+import { initializeDatabase, closeDatabase } from './utils/database.js';
+import { ensureDataDirectories } from './utils/fileSystem.js';
+import authRoutes from './routes/authRoutes.js';
 import chatRoutes from './routes/chat.js';
-import memoryRoutes from './routes/memory.js';
-import voiceRoutes from './routes/voice.js';
-import settingsRoutes from './routes/settings.js';
+import toolsRoutes from './routes/tools.js';
 import filesRoutes from './routes/files.js';
 import appsRoutes from './routes/apps.js';
-import logsRoutes from './routes/logs.js';
-import authRoutes from './routes/auth.js';
-import gmailRoutes from './routes/gmail.js';
-import calendarRoutes from './routes/calendar.js';
-import searchRoutes from './routes/search.js';
-import workflowsRoutes from './routes/workflows.js';
-import ocrRoutes from './routes/ocr.js';
-import ttsRoutes from './routes/tts.js';
-import toolsRoutes from './routes/tools.js';
-
-// NEW: Context-aware memory and task routes
-import structuredMemoryRoutes from './routes/structuredMemory.js';
 import tasksRoutes from './routes/tasks.js';
-import coordinatorRoutes from './routes/coordinator.js';
+import memoryRoutes from './routes/structuredMemory.js';
 import profileRoutes from './routes/profile.js';
-
-// Import utilities
-import { initializeDatabase } from './utils/database.js';
-import { ensureDataDirectories } from './utils/fileSystem.js';
-// import { initializeGemini, isGeminiAvailable } from './utils/geminiClient.js'; // DISABLED - Using Groq only
-import { isOllamaHealthy } from './utils/ollamaClient.js';
-import { isGroqAvailable } from './utils/groqClient.js';
-import { initializeWorkflowEngine } from './services/workflowEngine.js';
-import { initializeReminders } from './services/reminderService.js';
-import { testEncryption } from './utils/encryption.js';
-
-// NEW: Authentication routes
-import authRoutesNew from './routes/authRoutes.js';
-
-// NEW: Rate limiters
-import { apiLimiter } from './middleware/rateLimiter.js';
-
-const app = express();
-const PORT = process.env.PORT || 5000;
-
-// Create HTTP server for WebSocket support
-const server = http.createServer(app);
-
-// Initialize WebSocket server for voice call mode
-const wss = new WebSocketServer({ server, path: '/ws/voice-mode' });
-
-wss.on('connection', (ws) => {
-  console.log('📞 Voice call mode: Client connected');
-  
-  ws.on('message', (data) => {
-    try {
-      const message = JSON.parse(data);
-      console.log('📞 Received:', message);
-      // Handle voice call interactions
-    } catch (error) {
-      console.error('WebSocket message error:', error);
-    }
-  });
-
-  ws.on('close', () => {
-    console.log('📞 Voice call mode: Client disconnected');
-  });
-});
-
-// Middleware
-
-// Security headers with Helmet
-app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-      imgSrc: ["'self'", "data:", "https:"],
-      connectSrc: ["'self'", "http://localhost:5000", "ws://localhost:5000", "https://vezora-server.onrender.com", "wss://vezora-server.onrender.com"],
-    },
-  },
-  crossOriginEmbedderPolicy: false,
-}));
-
-// CORS
-app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:5173',
-    'https://vezora-ai.vercel.app',
-    'http://localhost:5173'
-  ],
-  credentials: true
-}));
-
-// Rate limiting for API routes
+import ttsRoutes from './routes/tts.js';
+import voiceRoutes from './routes/voice.js';
+const settings = config();
+export const app = express();
+app.disable('x-powered-by');
+app.use(helmet());
+app.use(cors({ origin: ['null','http://localhost:5173','http://127.0.0.1:5173'], allowedHeaders: ['Content-Type','Authorization','X-Vezora-Token'] }));
+app.use(localTransport(settings.token));
+app.use(express.json({ limit: '1mb' }));
+app.get('/health', (_req,res) => res.json({ status: 'ready' }));
 app.use('/api', apiLimiter);
-
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-// Serve static files from public directory
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Request logging middleware
-app.use((req, res, next) => {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${req.method} ${req.path}`);
-  next();
-});
-
-// Root route
-app.get('/', (req, res) => {
-  res.json({
-    name: 'Vezora AI Backend',
-    version: '1.0.0',
-    status: 'running',
-    endpoints: {
-      health: '/health',
-      api: '/api/*'
-    }
-  });
-});
-
-// Health check endpoint
-app.get('/health', async (req, res) => {
-  // const geminiAvailable = isGeminiAvailable(); // Gemini disabled
-  const ollamaHealthy = await isOllamaHealthy();
-  
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0',
-    aiProviders: {
-      groq: isGroqAvailable() ? 'available' : 'not configured',
-      ollama: ollamaHealthy ? 'connected' : 'disconnected',
-      active: 'groq'
-    },
-    features: {
-      voiceCallMode: process.env.VOICE_CALL_MODE === 'true',
-      appLaunch: process.env.ENABLE_APP_LAUNCH === 'true',
-      fileSystem: process.env.ENABLE_FILE_SYSTEM === 'true'
-    }
-  });
-});
-
-// API Routes
+app.use('/api/auth', authRoutes);
+app.use('/api', authenticate);
+// These legacy paths lack safe ownership, bounded input, or confirmation semantics.
+for (const route of ['gmail','calendar','workflows','ocr','memory','logs','settings','search','coordinator']) app.use('/api/' + route, disabled);
+app.use('/auth', disabled);
+app.use('/api/chat/stream', disabled);
+app.use('/api/chat/intent', disabled);
 app.use('/api/chat', chatRoutes);
-app.use('/api/memory', memoryRoutes);
-app.use('/api/voice', voiceRoutes);
-app.use('/api/settings', settingsRoutes);
+app.use('/api/tools', toolsRoutes);
 app.use('/api/files', filesRoutes);
 app.use('/api/apps', appsRoutes);
-app.use('/api/logs', logsRoutes);
-
-// NEW: Multi-user authentication routes
-app.use('/api/auth', authRoutesNew);
-
-// Google OAuth routes
-app.use('/api/gmail', gmailRoutes);
-app.use('/api/calendar', calendarRoutes);
-app.use('/api/search', searchRoutes);
-app.use('/api/workflows', apiLimiter, workflowsRoutes);
-app.use('/api/ocr', apiLimiter, ocrRoutes);
-
-// NEW: Context-aware memory and task management
-app.use('/api/structured-memory', apiLimiter, structuredMemoryRoutes);
-app.use('/api/tasks', apiLimiter, tasksRoutes);
-app.use('/api/coordinator', apiLimiter, coordinatorRoutes);
-app.use('/api/profile', apiLimiter, profileRoutes);
-app.use('/api/tts', apiLimiter, ttsRoutes);
-app.use('/api/tools', apiLimiter, toolsRoutes);
-
-// Mount auth callback at root level for Google OAuth (matches redirect URI)
-app.use('/auth', authRoutes);
-
-// Error handling middleware
-app.use((error, req, res, next) => {
-  console.error('❌ Error:', error);
-  
-  res.status(error.status || 500).json({
-    error: {
-      message: error.message || 'Internal server error',
-      status: error.status || 500,
-      timestamp: new Date().toISOString()
-    }
-  });
+app.use('/api/tasks', tasksRoutes);
+app.use('/api/structured-memory', memoryRoutes);
+app.use('/api/profile', profileRoutes);
+app.use('/api/tts', ttsRoutes);
+app.use('/api/voice', voiceRoutes);
+app.use((_req,res) => res.status(404).json({ error: 'Not found' }));
+app.use((error,_req,res,_next) => {
+  if (!res.headersSent) res.status(error.status || 500).json({ error: 'Request failed' });
 });
-
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({
-    error: {
-      message: 'Endpoint not found',
-      status: 404,
-      path: req.path
-    }
-  });
-});
-
-// Initialize and start server
-async function startServer() {
-  try {
-    // Ensure data directories exist
-    await ensureDataDirectories();
-    
-    // Initialize database (SQLite for local features)
-    await initializeDatabase();
-    console.log('✅ SQLite Local Database initialized successfully');
-    // Test encryption
-    console.log('🔐 Testing encryption...');
-    const encryptionWorking = testEncryption();
-    if (!encryptionWorking) {
-      console.warn('⚠️  WARNING: Encryption test failed! Check ENCRYPTION_KEY in .env');
-    }
-    
-    // Initialize workflow engine
-    await initializeWorkflowEngine();
-    await initializeReminders();
-    
-    // Start server
-    server.listen(PORT, async () => {
-      console.log('\n🚀 Vezora AI Backend Server');
-      console.log('================================');
-      console.log(`✅ Server running on http://localhost:${PORT}`);
-      console.log(`✅ WebSocket available at ws://localhost:${PORT}/ws/voice-mode`);
-      console.log(`✅ Auth endpoint: http://localhost:${PORT}/api/auth/google`);
-      console.log('');
-      
-      // Initialize and check AI providers
-      // initializeGemini(); // DISABLED - Using Groq only
-      // const geminiAvailable = isGeminiAvailable();
-      const ollamaHealthy = await isOllamaHealthy();
-      
-      console.log('🤖 AI Providers:');
-      console.log(`   ✅ Groq: ACTIVE (${process.env.GROQ_MODEL || 'llama-3.3-70b-versatile'})`);
-      
-      if (ollamaHealthy) {
-        console.log(`   ✅ Ollama: ACTIVE (${process.env.OLLAMA_MODEL_NAME || 'phi'})`);
-      } else {
-        console.log(`   ⚪ Ollama: Not running`);
-      }
-      
-      // Show active provider
-      const activeProvider = 'Groq';
-      console.log(`   🎯 Primary: ${activeProvider}`);
-      console.log('');
-      
-      console.log('🔧 Features:');
-      console.log(`   ${process.env.VOICE_CALL_MODE === 'true' ? '✅' : '⚪'} Voice Call Mode`);
-      console.log(`   ${process.env.ENABLE_APP_LAUNCH === 'true' ? '✅' : '⚪'} App Launch`);
-      console.log(`   ${process.env.ENABLE_GMAIL === 'true' ? '✅' : '⚪'} Gmail Integration`);
-      console.log(`   ${process.env.ENABLE_CALENDAR === 'true' ? '✅' : '⚪'} Calendar Integration`);
-      console.log(`   ${process.env.ENABLE_WEB_SEARCH === 'true' ? '✅' : '⚪'} Web Search`);
-      console.log(`   ${process.env.ENABLE_WORKFLOWS === 'true' ? '✅' : '⚪'} Workflow Automation`);
-      console.log(`   ${process.env.ENABLE_GEMINI_GROUNDING === 'true' ? '✅' : '⚪'} Gemini Grounding`);
-      console.log('================================\n');
-    });
-  } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
-  }
+const server = http.createServer(app);
+server.on('upgrade',(_req,socket) => socket.destroy()); // Unimplemented voice WS is not exposed.
+server.requestTimeout = 30000;
+server.headersTimeout = 10000;
+let shuttingDown = false;
+function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  stopChildren();
+  server.close(() => { closeDatabase(); process.exit(0); });
+  server.closeIdleConnections();
+  setTimeout(() => process.exit(1),3000).unref();
 }
-
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('📪 SIGTERM received, shutting down gracefully...');
-  server.close(() => {
-    console.log('✅ Server closed');
-    process.exit(0);
-  });
+process.on('SIGTERM',shutdown);
+process.on('SIGINT',shutdown);
+process.on('disconnect',shutdown);
+process.on('message',message => { if (message?.type === 'shutdown') shutdown(); });
+process.parentPort?.on('message',event => { if (event.data?.type === 'shutdown') shutdown(); });
+await ensureDataDirectories();
+await initializeDatabase();
+server.on('error',() => { console.error('Backend failed to bind'); process.exit(1); });
+server.listen(settings.port, settings.host, () => {
+  const ready = { type: 'ready', port: server.address().port };
+  process.parentPort?.postMessage(ready);
+  process.send?.(ready);
+  console.log('Local backend ready');
 });
-
-process.on('SIGINT', () => {
-  console.log('\n📪 SIGINT received, shutting down gracefully...');
-  server.close(() => {
-    console.log('✅ Server closed');
-    process.exit(0);
-  });
-});
-
-// Start the server
-startServer();

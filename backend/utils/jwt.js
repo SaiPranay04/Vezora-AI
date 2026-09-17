@@ -5,8 +5,12 @@
 
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
-const JWT_EXPIRES_IN = '7d'; // Tokens expire in 7 days
+import { config } from '../config.js';
+import { randomUUID } from 'node:crypto';
+const bootId = randomUUID();
+const revoked = new Map();
+export function revokeToken(token) { const value = verifyToken(token); revoked.set(value.jti,value.exp); }
+const JWT_EXPIRES_IN = '8h'; // Tokens expire in 7 days
 const REFRESH_TOKEN_EXPIRES_IN = '30d'; // Refresh tokens expire in 30 days
 
 /**
@@ -16,7 +20,8 @@ const REFRESH_TOKEN_EXPIRES_IN = '30d'; // Refresh tokens expire in 30 days
  */
 export function generateToken(payload) {
   try {
-    return jwt.sign(payload, JWT_SECRET, {
+    return jwt.sign({ ...payload, kind: 'access', bootId }, config().jwtSecret, {
+      jwtid: randomUUID(), algorithm: 'HS256',
       expiresIn: JWT_EXPIRES_IN,
       issuer: 'vezora-ai',
       audience: 'vezora-users'
@@ -34,7 +39,8 @@ export function generateToken(payload) {
  */
 export function generateRefreshToken(payload) {
   try {
-    return jwt.sign(payload, JWT_SECRET, {
+    return jwt.sign({ ...payload, kind: 'refresh', bootId }, config().jwtSecret, {
+      jwtid: randomUUID(), algorithm: 'HS256',
       expiresIn: REFRESH_TOKEN_EXPIRES_IN,
       issuer: 'vezora-ai',
       audience: 'vezora-users'
@@ -50,12 +56,16 @@ export function generateRefreshToken(payload) {
  * @param {string} token - JWT token to verify
  * @returns {Object} Decoded token payload
  */
-export function verifyToken(token) {
+export function verifyToken(token, kind = 'access') {
   try {
-    return jwt.verify(token, JWT_SECRET, {
+    const decoded = jwt.verify(token, config().jwtSecret, {
+      algorithms: ['HS256'],
       issuer: 'vezora-ai',
       audience: 'vezora-users'
     });
+    for (const [id,exp] of revoked) if (exp <= Date.now()/1000) revoked.delete(id);
+    if (decoded.bootId !== bootId || decoded.kind !== kind || !decoded.jti || !decoded.userId || revoked.has(decoded.jti)) throw new Error('Invalid token type or revoked session');
+    return decoded;
   } catch (error) {
     if (error.name === 'TokenExpiredError') {
       throw new Error('Token expired');

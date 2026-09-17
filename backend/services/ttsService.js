@@ -1,3 +1,4 @@
+import { trackChild } from '../security/children.js';
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
@@ -9,7 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Path to piper executable and model
-const PIPER_DIR = path.join(__dirname, '..', 'bin', 'piper');
+const PIPER_DIR = process.env.PIPER_DIR || path.join(__dirname, '..', 'bin', 'piper');
 const PIPER_EXE = path.join(PIPER_DIR, 'piper.exe');
 const VOICE_MODEL = process.env.PIPER_VOICE_MODEL || path.join(PIPER_DIR, 'en_US-lessac-medium.onnx');
 
@@ -41,16 +42,22 @@ export async function streamTTS(text, res) {
   const cleanText = text.replace(/\*/g, '').trim();
   
   // Create a temporary file path
-  const tempDir = path.join(__dirname, '..', 'data', 'temp');
+  const tempDir = path.join(process.env.DATA_DIR, 'temp');
   await fsPromises.mkdir(tempDir, { recursive: true });
   
   const tempWav = path.join(tempDir, `${uuidv4()}.wav`);
 
   // Spawn piper process to output to FILE instead of STDOUT 
   // This completely prevents Windows from mutating 0x0A to 0x0D0A (CRLF binary corruption)!
-  const piperProcess = spawn(PIPER_EXE, ['-m', VOICE_MODEL, '-f', tempWav], {
-    stdio: ['pipe', 'ignore', 'pipe']
-  });
+  const piperProcess = trackChild(spawn(PIPER_EXE, ['-m', VOICE_MODEL, '-f', tempWav], {
+    windowsHide: true, stdio: ['pipe', 'ignore', 'pipe']
+  }));
+  piperProcess.stderr.resume();
+  piperProcess.stdin.on('error', () => {});
+  const timeout = setTimeout(() => piperProcess.kill(), 45000);
+  timeout.unref();
+  piperProcess.once('close', () => clearTimeout(timeout));
+  res.once('close', () => { if (piperProcess.exitCode === null) piperProcess.kill(); });
 
   piperProcess.stdin.write(cleanText);
   piperProcess.stdin.end();

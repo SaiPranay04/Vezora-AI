@@ -5,7 +5,7 @@
 
 import express from 'express';
 import { createUser, verifyUserPassword, getUserById } from '../models/User.js';
-import { generateToken, generateRefreshToken, verifyToken } from '../utils/jwt.js';
+import { generateToken, verifyToken, revokeToken } from '../utils/jwt.js';
 import { authenticate } from '../middleware/auth.js';
 import { authLimiter } from '../middleware/rateLimiter.js';
 
@@ -27,6 +27,7 @@ router.post('/register', authLimiter, async (req, res) => {
       });
     }
 
+    if (typeof email !== 'string' || typeof password !== 'string' || password.length > 256 || (name !== undefined && typeof name !== 'string')) return res.status(400).json({ error: 'Invalid credentials' });
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
@@ -53,7 +54,7 @@ router.post('/register', authLimiter, async (req, res) => {
 
     // Generate tokens
     const token = generateToken({ userId: user.id, email: user.email });
-    const refreshToken = generateRefreshToken({ userId: user.id });
+    const refreshToken = null;
 
     console.log('✅ New user registered:', user.email);
 
@@ -102,6 +103,7 @@ router.post('/login', authLimiter, async (req, res) => {
       });
     }
 
+    if (typeof email !== 'string' || typeof password !== 'string' || password.length > 256) return res.status(400).json({ error: 'Invalid credentials' });
     // Verify credentials
     const user = await verifyUserPassword(email, password);
     if (!user) {
@@ -113,7 +115,7 @@ router.post('/login', authLimiter, async (req, res) => {
 
     // Generate tokens
     const token = generateToken({ userId: user.id, email: user.email });
-    const refreshToken = generateRefreshToken({ userId: user.id });
+    const refreshToken = null;
 
     console.log('✅ User logged in:', user.email);
 
@@ -143,54 +145,7 @@ router.post('/login', authLimiter, async (req, res) => {
  * POST /api/auth/refresh
  * Refresh access token using refresh token
  */
-router.post('/refresh', async (req, res) => {
-  try {
-    const { refreshToken } = req.body;
-
-    if (!refreshToken) {
-      return res.status(400).json({
-        error: 'Missing token',
-        message: 'Refresh token is required.'
-      });
-    }
-
-    // Verify refresh token
-    let decoded;
-    try {
-      decoded = verifyToken(refreshToken);
-    } catch (error) {
-      return res.status(401).json({
-        error: 'Invalid token',
-        message: error.message
-      });
-    }
-
-    // Get user
-    const user = await getUserById(decoded.userId);
-    if (!user) {
-      return res.status(401).json({
-        error: 'User not found',
-        message: 'The user associated with this token no longer exists.'
-      });
-    }
-
-    // Generate new tokens
-    const newToken = generateToken({ userId: user.id, email: user.email });
-    const newRefreshToken = generateRefreshToken({ userId: user.id });
-
-    res.json({
-      success: true,
-      token: newToken,
-      refreshToken: newRefreshToken
-    });
-  } catch (error) {
-    console.error('❌ Token refresh error:', error.message);
-    res.status(500).json({
-      error: 'Token refresh failed',
-      message: 'An error occurred while refreshing token.'
-    });
-  }
-});
+router.post('/refresh', (_req, res) => res.status(403).json({ error: 'Refresh disabled until durable rotation is implemented; sign in again.' }));
 
 /**
  * GET /api/auth/me
@@ -217,7 +172,7 @@ router.get('/me', authenticate, async (req, res) => {
  */
 router.post('/logout', authenticate, async (req, res) => {
   try {
-    console.log('✅ User logged out:', req.user.email);
+    revokeToken(req.headers.authorization.slice(7));
     
     res.json({
       success: true,

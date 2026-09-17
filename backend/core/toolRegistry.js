@@ -260,11 +260,12 @@ register({
 });
 
 export function getTool(name) {
+  if (name === 'settings.update') return null; // Legacy settings schema is not constrained.
   return registry.get(name) || null;
 }
 
 export function listTools() {
-  return Array.from(registry.values()).map(({ name, description, risky, schema }) => ({
+  return Array.from(registry.values()).filter(tool => getTool(tool.name)).map(({ name, description, risky, schema }) => ({
     name,
     description,
     risky,

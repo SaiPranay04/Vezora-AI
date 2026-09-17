@@ -1,3 +1,4 @@
+import { executeTool } from '../core/toolExecutor.js';
 /**
  * Tasks Routes - API endpoints for task management
  * NOW WITH MULTI-USER SUPPORT
@@ -10,7 +11,6 @@ import {
   getTask,
   getTasks,
   updateTask,
-  deleteTask,
   getPendingTasks,
   getInProgressTasks,
   getCompletedTasks,
@@ -155,29 +155,8 @@ router.put('/:id',
  * DELETE /api/tasks/:id
  * Delete task
  */
-router.delete('/:id',
-  [param('id').isUUID().withMessage('Invalid task ID'), validateRequest],
-  async (req, res) => {
-    try {
-      const userId = getUserIdFromRequest(req);
-      const deleted = await deleteTask(userId, req.params.id);
-      
-      if (!deleted) {
-        return res.status(404).json({ error: 'Task not found' });
-      }
-      
-      res.json({
-        success: true,
-        message: 'Task deleted successfully'
-      });
-    } catch (error) {
-      console.error('❌ Delete task error:', error);
-      res.status(500).json({ error: 'Failed to delete task' });
-    }
-  }
-);
-
-// ==================== STATUS UPDATES ====================
+router.delete('/:id', async (req,res) => { const result = await executeTool('todo.delete', { id: req.params.id }); res.status(result.requiresConfirmation ? 202 : 400).json(result); });
+// Legacy direct deletion disabled.
 
 /**
  * POST /api/tasks/:id/complete

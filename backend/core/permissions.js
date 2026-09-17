@@ -1,127 +1,46 @@
-/**
- * Safety / Permission Layer (Fable Phase 3)
- * Gates risky tools and blocks destructive shell patterns.
- */
-
-import { randomUUID } from 'crypto';
-
-/** Tools that require explicit user confirmation before running */
-export const RISKY_TOOLS = new Set([
-  'todo.delete',
-  'file.write',
-  'file.rename',
-  'file.move',
-  'file.delete',
-  'app.open',
-  'settings.update',
-  'shell.run'
-]);
-
-/** Patterns that are never allowed, even if confirmed */
-const DENY_PATTERNS = [
-  /rm\s+-rf\s+[\/\\]/i,
-  /del\s+\/[sf]/i,
-  /format\s+[a-z]:/i,
-  /reg\s+delete/i,
-  /Remove-Item\s+-Recurse\s+-Force\s+[A-Z]:\\/i,
-  /shutdown/i,
-  /mkfs/i
-];
-
-/** In-memory pending confirmations (TTL 5 min) */
-const pending = new Map();
-const PENDING_TTL_MS = 5 * 60 * 1000;
-
-export function isRiskyTool(name) {
-  return RISKY_TOOLS.has(name);
+import { randomUUID, createHash } from 'node:crypto';
+export const RISKY_TOOLS = new Set(['todo.delete','file.write','file.open','memory.forget','app.open','settings.update']);
+export const isRiskyTool = name => RISKY_TOOLS.has(name);
+export const isDeniedCommand = () => true; // General shell execution is never supported.
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.keys(value).sort().map(k => [k,canonical(value[k])]));
+  return value;
 }
-
-export function isDeniedCommand(command = '') {
-  return DENY_PATTERNS.some((re) => re.test(String(command)));
-}
-
-/**
- * Create a pending confirmation ticket.
- * @returns {{ pendingId: string, expiresAt: number }}
- */
-export function createPendingConfirmation({ toolName, args, preview, userId }) {
-  const pendingId = randomUUID();
-  const expiresAt = Date.now() + PENDING_TTL_MS;
-  pending.set(pendingId, { toolName, args, preview, userId, expiresAt });
-  return { pendingId, expiresAt };
-}
-
-export function getPendingConfirmation(pendingId) {
-  const entry = pending.get(pendingId);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    pending.delete(pendingId);
-    return null;
-  }
-  return entry;
-}
-
-export function consumePendingConfirmation(pendingId) {
-  const entry = getPendingConfirmation(pendingId);
-  if (entry) pending.delete(pendingId);
-  return entry;
-}
-
-export function cancelPendingConfirmation(pendingId) {
-  return pending.delete(pendingId);
-}
-
-/**
- * Check whether a tool may run now.
- * @returns {{ allowed: boolean, requiresConfirmation?: boolean, denied?: boolean, reason?: string, pendingId?: string, preview?: string }}
- */
-export function checkPermission(toolName, args = {}, options = {}) {
-  const { confirmed = false, pendingId = null, userId = null, preview } = options;
-
-  if (toolName === 'shell.run' && isDeniedCommand(args.command)) {
-    return {
-      allowed: false,
-      denied: true,
-      reason: 'This command is on the deny-list and cannot be executed.'
-    };
-  }
-
-  if (!isRiskyTool(toolName)) {
-    return { allowed: true };
-  }
-
-  if (confirmed && pendingId) {
-    const entry = getPendingConfirmation(pendingId);
-    if (!entry) {
-      return { allowed: false, reason: 'Confirmation expired or invalid. Please try again.' };
-    }
-    if (userId && entry.userId && entry.userId !== userId) {
-      return { allowed: false, reason: 'Confirmation does not belong to this user.' };
-    }
-    if (entry.toolName !== toolName) {
-      return { allowed: false, reason: 'Confirmation tool mismatch.' };
-    }
-    return { allowed: true };
-  }
-
-  const builtPreview =
-    preview ||
-    `${toolName}(${Object.entries(args)
-      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-      .join(', ')})`;
-
-  const ticket = createPendingConfirmation({
-    toolName,
-    args,
-    preview: builtPreview,
-    userId
-  });
-
+const hash = args => createHash('sha256').update(JSON.stringify(canonical(args))).digest('hex');
+export function createConfirmationStore({ now = Date.now, ttl = 300000 } = {}) {
+  const pending = new Map();
+  const prune = () => { for (const [id, entry] of pending) if (entry.expiresAt <= now()) pending.delete(id); };
   return {
-    allowed: false,
-    requiresConfirmation: true,
-    pendingId: ticket.pendingId,
-    preview: builtPreview,
-    expiresAt: ticket.expiresAt
+    create({ toolName, args, preview, userId, sessionId }) {
+      prune();
+      if (!userId || !sessionId) throw new Error('Authenticated session required');
+      if (pending.size >= 256) throw new Error('Too many pending confirmations');
+      const pendingId = randomUUID();
+      const entry = { toolName, args: structuredClone(args), hash: hash(args), preview, userId, sessionId, expiresAt: now() + ttl };
+      pending.set(pendingId, entry);
+      return { pendingId, expiresAt: entry.expiresAt };
+    },
+    get(id, owner) {
+      prune(); const e = pending.get(id);
+      return e && e.userId === owner.userId && e.sessionId === owner.sessionId ? structuredClone(e) : null;
+    },
+    consume(id, toolName, args, owner) {
+      const e = this.get(id, owner);
+      if (!e || e.toolName !== toolName || e.hash !== hash(args)) return false;
+      pending.delete(id); // Synchronous consumption before any handler await prevents concurrent replay.
+      return true;
+    },
+    cancel(id, owner) { if (!this.get(id, owner)) return false; return pending.delete(id); }
   };
+}
+export const confirmations = createConfirmationStore();
+export function checkPermission(toolName, args, options = {}) {
+  const { userId, sessionId, confirmed = false, pendingId, risky = isRiskyTool(toolName), preview } = options;
+  const owner = { userId, sessionId };
+  if (!userId || !sessionId || toolName === 'shell.run') return { allowed: false, denied: true, reason: 'Unauthorized operation' };
+  if (confirmed) return confirmations.consume(pendingId, toolName, args, owner)
+    ? { allowed: true } : { allowed: false, denied: true, reason: 'Invalid, expired, modified or already used confirmation' };
+  if (!risky) return { allowed: true };
+  return { allowed: false, requiresConfirmation: true, preview, ...confirmations.create({ toolName, args, preview, ...owner }) };
 }

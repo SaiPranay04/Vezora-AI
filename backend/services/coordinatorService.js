@@ -15,7 +15,7 @@
 // Using vector-based retrieval for semantic search
 import { getRelevantContext, formatContextForPrompt, getDailySummaryContext } from './retrievalService.js';
 import { addProject, addDecision, addPreference } from './memoryService.js';
-import { addTask, getTasks, updateTask, deleteTask } from './taskService.js';
+import { addTask, getTasks, updateTask } from './taskService.js';
 import { generateGroqCompletion, isGroqAvailable } from '../utils/groqClient.js';
 import { generateChatCompletion, isOllamaHealthy } from '../utils/ollamaClient.js';
 import { generateGeminiCompletion, isGeminiAvailable } from '../utils/geminiClient.js';
@@ -183,19 +183,7 @@ async function executeTaskAction(intent, userId) {
       }
 
       case 'task_delete': {
-        if (!intent.task_delete?.task_name) break;
-
-        const allTasks = await getTasks(userId, {});
-        const matchedTask = fuzzyMatchTask(allTasks, intent.task_delete.task_name);
-
-        if (matchedTask) {
-          await deleteTask(userId, matchedTask.id);
-          confirmations.push(`✅ Task deleted: "${matchedTask.title}"`);
-          console.log(`✅ [ACTION] Task deleted: "${matchedTask.title}"`);
-        } else {
-          confirmations.push(`⚠️ No task found matching "${intent.task_delete.task_name}". Available tasks: ${allTasks.filter(t => t.status !== 'completed').map(t => `"${t.title}"`).slice(0, 5).join(', ')}`);
-          console.log(`⚠️ [ACTION] No task found matching: "${intent.task_delete.task_name}"`);
-        }
+        confirmations.push('Task deletion by fuzzy chat matching is disabled. Use the task list and explicit confirmation.');
         break;
       }
 

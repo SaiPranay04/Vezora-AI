@@ -1,3 +1,4 @@
+import { executeTool } from '../core/toolExecutor.js';
 /**
  * Structured Memory Routes - PostgreSQL-based memory management
  * NOW WITH MULTI-USER SUPPORT
@@ -9,7 +10,6 @@ import {
   addMemory,
   getMemory,
   getMemoriesByType,
-  deleteMemory,
   addProject,
   addDecision,
   addPreference,
@@ -169,32 +169,8 @@ router.get('/:type/:key', async (req, res) => {
  * DELETE /api/structured-memory/:type/:key
  * Delete specific memory
  */
-router.delete('/:type/:key', async (req, res) => {
-  try {
-    const userId = getUserIdFromRequest(req);
-    const { type, key } = req.params;
-    
-    if (!Object.values(MEMORY_TYPES).includes(type)) {
-      return res.status(400).json({ error: 'Invalid memory type' });
-    }
-    
-    const deleted = await deleteMemory(userId, type, key);
-    
-    if (!deleted) {
-      return res.status(404).json({ error: 'Memory not found' });
-    }
-    
-    res.json({
-      success: true,
-      message: 'Memory deleted successfully'
-    });
-  } catch (error) {
-    console.error('❌ Delete memory error:', error);
-    res.status(500).json({ error: 'Failed to delete memory' });
-  }
-});
-
-// ==================== PROJECT ROUTES ====================
+router.delete('/:type/:key', async (req,res) => { const result = await executeTool('memory.forget', { type: req.params.type, key: req.params.key }); res.status(result.requiresConfirmation ? 202 : 400).json(result); });
+// Legacy direct deletion disabled.
 
 /**
  * POST /api/structured-memory/projects

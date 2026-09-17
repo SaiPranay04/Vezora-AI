@@ -3,11 +3,9 @@
  */
 
 import { getTool } from './toolRegistry.js';
-import {
-  checkPermission,
-  consumePendingConfirmation,
-  cancelPendingConfirmation
-} from './permissions.js';
+import { checkPermission, confirmations } from './permissions.js';
+import { identity } from '../security/identity.js';
+import { config } from '../config.js';
 
 /**
  * Execute a registered tool.
@@ -19,7 +17,10 @@ import {
  * @param {string} [options.pendingId]
  */
 export async function executeTool(toolName, args = {}, options = {}) {
-  const { userId = 'default', confirmed = false, pendingId = null } = options;
+  let owner;
+  try { owner = identity(); } catch { return { success: false, denied: true, error: 'Authentication required' }; }
+  const { userId, sessionId } = owner;
+  const { confirmed = false, pendingId = null } = options;
   const tool = getTool(toolName);
 
   if (!tool) {
@@ -29,6 +30,9 @@ export async function executeTool(toolName, args = {}, options = {}) {
     };
   }
 
+  if ((toolName.startsWith('file.') && !config().files) || (toolName === 'app.open' && !config().apps)) return { success: false, denied: true, error: 'Feature disabled' };
+  if (['file.write','file.open'].includes(toolName)) return { success: false, denied: true, error: 'File writes and OS file opening are disabled pending race-safe Windows handles' };
+  if (typeof tool.risky !== 'boolean' || !tool.schema) return { success: false, denied: true, error: 'Incomplete tool policy' };
   // Validate args
   let parsed = args;
   try {
@@ -48,7 +52,7 @@ export async function executeTool(toolName, args = {}, options = {}) {
     confirmed,
     pendingId,
     userId,
-    preview
+    preview, sessionId, risky: tool.risky
   });
 
   if (permission.denied) {
@@ -71,10 +75,8 @@ export async function executeTool(toolName, args = {}, options = {}) {
     };
   }
 
+  if (permission.allowed !== true) return { success: false, denied: true, error: permission.reason || 'Permission denied' };
   try {
-    if (confirmed && pendingId) {
-      consumePendingConfirmation(pendingId);
-    }
 
     const result = await tool.handler(parsed, { userId });
     return {
@@ -97,23 +99,14 @@ export async function executeTool(toolName, args = {}, options = {}) {
 /**
  * Confirm or cancel a pending risky tool.
  */
-export async function confirmTool(pendingId, { approve, userId }) {
-  if (!approve) {
-    cancelPendingConfirmation(pendingId);
-    return { success: true, cancelled: true };
-  }
-
-  const { getPendingConfirmation } = await import('./permissions.js');
-  const entry = getPendingConfirmation(pendingId);
-  if (!entry) {
-    return { success: false, error: 'Confirmation expired or not found' };
-  }
-
-  return executeTool(entry.toolName, entry.args, {
-    userId: userId || entry.userId,
-    confirmed: true,
-    pendingId
-  });
+export async function confirmTool(pendingId, { approve }) {
+  let owner;
+  try { owner = identity(); } catch { return { success: false, denied: true, error: 'Authentication required' }; }
+  if (typeof approve !== 'boolean') return { success: false, error: 'Explicit boolean approval required' };
+  if (!approve) { const cancelled = confirmations.cancel(pendingId, owner); return { success: cancelled, cancelled }; }
+  const entry = confirmations.get(pendingId, owner);
+  if (!entry) return { success: false, denied: true, error: 'Confirmation invalid or expired' };
+  return executeTool(entry.toolName, entry.args, { confirmed: true, pendingId });
 }
 
 function buildPreview(toolName, args) {

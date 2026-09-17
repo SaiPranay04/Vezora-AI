@@ -1,0 +1,28 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { approvedPath } from '../backend/security/paths.js';
+import { initializeConfig } from '../backend/config.js';
+import { readFile,saveFile,openFile } from '../backend/controllers/filesController.js';
+test('approved roots: traversal, sibling prefix, junction escape, bounded files and flags',async t=>{
+ const temp=await fs.mkdtemp(path.join(os.tmpdir(),'vezora-security-'));
+ t.after(async()=>{if(path.dirname(temp)!==os.tmpdir() || !path.basename(temp).startsWith('vezora-security-'))throw new Error('Unexpected cleanup path');await fs.rm(temp,{recursive:true,force:true});});
+ const root=path.join(temp,'approved'),sibling=path.join(temp,'approved-other');await fs.mkdir(root);await fs.mkdir(sibling);
+ const file=path.join(root,'note.txt');await fs.writeFile(file,'hello');await fs.writeFile(path.join(sibling,'private.txt'),'outside');
+ assert.equal(await approvedPath(file,[root]),file);
+ await assert.rejects(approvedPath(root+path.sep+'..'+path.sep+'approved-other'+path.sep+'private.txt',[root]));
+ await assert.rejects(approvedPath(path.join(sibling,'private.txt'),[root]));
+ await assert.rejects(approvedPath('relative.txt',[root]));
+ const link=path.join(root,'escape');await fs.symlink(sibling,link,process.platform==='win32'?'junction':'dir');
+ await assert.rejects(approvedPath(path.join(link,'private.txt'),[root]));
+ await assert.rejects(approvedPath(path.join(link,'new.txt'),[root],{create:true}));
+ const env={VEZORA_TRANSPORT_TOKEN:'x'.repeat(48),ENABLE_FILE_SYSTEM:'true',VEZORA_APPROVED_ROOTS:JSON.stringify([root])};initializeConfig(env);
+ assert.equal(await readFile(file),'hello');
+ await fs.writeFile(path.join(root,'huge.txt'),Buffer.alloc(1024*1024+1));await assert.rejects(readFile(path.join(root,'huge.txt')));
+ await fs.writeFile(path.join(root,'binary.txt'),Buffer.from([0,1]));await assert.rejects(readFile(path.join(root,'binary.txt')));
+ await fs.writeFile(path.join(root,'.env'),'fixture-only');await assert.rejects(readFile(path.join(root,'.env')));
+ await assert.rejects(saveFile(file,'replacement'));await assert.rejects(openFile(file));assert.equal(await fs.readFile(file,'utf8'),'hello');
+ initializeConfig({...env,ENABLE_FILE_SYSTEM:'false'});await assert.rejects(readFile(file));
+});

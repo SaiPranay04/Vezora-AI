@@ -144,3 +144,10 @@ dist_electron/
 *.rpm
 *.msi
 *.nupkg
+
+# Phase 1 packaging staging/output
+.package/
+release-phase1/
+
+# Standalone diagnostic runtime data
+/data/
