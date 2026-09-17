@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { installRendererCsp } from './desktop/csp.js';
 import { awaitBackend, trustedFrame } from './desktop/lifecycle.js';
 const base = path.dirname(fileURLToPath(import.meta.url));
 let window, backend, connection, expectedURL;
@@ -33,8 +34,7 @@ else {
       window.webContents.on('will-attach-webview',event => event.preventDefault());
       window.webContents.session.setPermissionRequestHandler((contents,permission,callback,details) => callback(contents === window?.webContents && contents.getURL() === expectedURL && permission === 'media' && !details.mediaTypes?.includes('video')));
       window.webContents.session.setPermissionCheckHandler((contents,permission) => contents === window?.webContents && contents.getURL() === expectedURL && permission === 'media');
-      window.webContents.session.webRequest.onHeadersReceived((details,callback) => callback({ responseHeaders:{ ...details.responseHeaders,
-        'Content-Security-Policy':["default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' "+connection.url+(app.isPackaged?'':" ws://localhost:5173")+"; object-src 'none'; frame-src 'none'; base-uri 'none'"] } }));
+      installRendererCsp(window.webContents.session, { isPackaged: app.isPackaged, backendUrl: connection.url });
       await window.loadURL(expectedURL);
     } catch { dialog.showErrorBox('Vezora could not start','Backend configuration, native dependencies or readiness failed. Check the Phase 1 setup guide.'); app.quit(); }
   });

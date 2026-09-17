@@ -25,13 +25,13 @@ Development retains `backend/data`. The packaged app uses Electron `userData/dat
 
 ## Validation and packaging
 
-`npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `npm run electron:build`, then `npm run test:desktop`.
+`npm run typecheck`, `npm run lint`, `npm test`, `npm run build`, `npm run electron:build`, then `npm run test:desktop` and `npm run test:desktop -- --dev`.
 
 The lint gate uses `eslint-baseline.json`, generated only from pre-Phase-1 HEAD. It tracks existing rule counts rather than disabling rules globally; new files have no suppression. `npm run lint:strict` exposes the remaining backlog. Existing React hook warnings are reported. Do not regenerate the baseline to hide a regression.
 
 The installer build stages explicit source plus restored dependencies in `.package/backend`, then writes `release-phase1`. Rebuilding deletes only that generated staging directory after validating its path/marker. Existing `release` artifacts are left untouched and must not be distributed: the audit found private backend artifacts there.
 
-`npm run package:verify` scans unpacked resources and app.asar paths. `npm run test:desktop` starts a hidden Electron with a temporary database and missing env file, checks packaged native startup, preload isolation, paired HTTP, renderer confirmation and shutdown. It does not access your real account or call providers.
+`npm run package:verify` scans unpacked resources and app.asar paths. `npm run test:desktop` starts a hidden Electron with a temporary database and missing env file, checks packaged native startup, preload isolation, paired HTTP, renderer confirmation and shutdown. It does not access your real account or call providers. Both modes install the same CSP helper as the main window and require a visible login form without startup errors. Packaged mode additionally verifies that an injected inline script cannot execute. Development mode starts/stops its own Vite server on port 5173 (close electron:dev first), checks the React Refresh preamble and HMR websocket, and uses temporary backend/profile data. Screenshots are written to ignored `tmp/renderer-packaged.png` and `tmp/renderer-dev.png`; pass `--show` for a visible smoke window.
 
 The generated installer is unsigned and retains the existing Electron version. Review dependency advisories and upgrade the old runtime in an explicitly scoped follow-up before distributing beyond trusted personal testing. No paid signing service was added.
 
@@ -43,3 +43,9 @@ The generated installer is unsigned and retains the existing Electron version. R
 - Close Vezora and confirm its companion exits; reopen and verify fresh sign-in. Check a second launch focuses the existing app.
 - Verify existing microphone permission and configured Piper playback; full voice cancellation/barge-in is explicitly outside Phase 1.
 - In a disposable Windows profile/VM, install/uninstall the unsigned build and verify data resides outside installation resources. Do not overwrite your existing personal install for this check.
+
+## Renderer CSP
+
+The packaging state, not NODE_ENV, selects the policy in desktop/csp.js. Production retains script-src 'self'. Only development adds script-src 'unsafe-inline' for Vite's injected React Refresh preamble; neither mode permits unsafe-eval. Development alone permits the Vite websocket at ws://localhost:5173.
+
+The existing Google Fonts import is allowed only through style-src https://fonts.googleapis.com and font-src https://fonts.gstatic.com. No script or general connection permission is granted to Google. Locally bundling the existing fonts is the preferred later improvement for offline availability and avoiding external font requests; it is not part of this regression fix.

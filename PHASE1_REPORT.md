@@ -128,3 +128,18 @@ User review/approval of Phase 1; acceptance of explicit disabled features; manua
 - tests/paths.test.js
 - tests/policy.test.js
 - tests/server.test.js
+## Phase 1 renderer regression follow-up
+
+The production script policy was incorrectly applied to Vite's inline React Refresh preamble, preventing the development renderer from mounting. The previous desktop harness did not install the main window CSP and therefore missed this regression.
+
+- main.js now installs the shared desktop/csp.js policy. Only explicit development mode (app.isPackaged === false) adds inline script permission; production remains script-src 'self'. No unsafe-eval, remote script origin, or unrelated directive relaxation was added.
+- The existing font import now has narrowly scoped stylesheet/font permissions for fonts.googleapis.com and fonts.gstatic.com. Local bundling remains a preferred later offline/privacy improvement; no font/provider migration or paid dependency was introduced.
+- tests/csp.test.js checks development/production separation, strict defaults, precise font permissions, unchanged restricted directives, backend origin validation, header installation and the main-window packaging-state connection.
+- scripts/run-smoke.mjs and scripts/smoke-desktop.cjs now test both development and packaged rendering under the actual shared policy. They require visible login-form opacity, catch renderer startup errors, verify the Vite React Refresh preamble/websocket, and prove packaged inline scripts are blocked. Existing native SQLite, IPC isolation, authenticated confirmation and shutdown checks remain.
+- PHASE1_SETUP.md documents both smoke commands and the policy. Generated screenshots remain ignored under tmp/.
+
+Validation: npm run electron:dev launched the actual app; Windows visual inspection confirmed the Welcome to Vezora AI login form, with email/password fields and Sign In button. The window was closed and development processes stopped afterward. Typecheck PASS; lint PASS with the same 10 pre-existing warnings; all 20 tests PASS; production build PASS; electron:build and package privacy verification PASS (24,126 resource files plus app.asar paths). Both npm run test:desktop and npm run test:desktop -- --dev PASS; packaged screenshot visually reviewed. Diff whitespace check PASS. Existing stale Browserslist, large bundle and unsigned/default-icon packaging warnings remain.
+
+Rebuilt installer SHA-256 (supersedes the earlier artifact hash above): 49E930531AB2D9A31400933BDD69CED2134244C3D0E612A825C2112BEED64619.
+
+This follow-up changes only the renderer CSP, its tests and documentation. All prior Phase 1 restrictions/remaining risks and Phase 2 entry criteria still apply. Full authenticated interaction and installer-profile checks remain manual. No Phase 2 or NottiPay work was performed.
